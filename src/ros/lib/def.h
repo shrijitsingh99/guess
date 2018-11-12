@@ -23,7 +23,9 @@ namespace guess {
   typedef Vector_<6> Vector6;
   typedef Vector_<7> Vector7;
 
-  /*! std::vector of Vector6 with aligned_allocation */
+  /*! std::vector of Vector with aligned_allocation */
+  typedef std::vector<Vector2,
+    Eigen::aligned_allocator<Vector2> > Vector2Vector;
   typedef std::vector<Vector6,
     Eigen::aligned_allocator<Vector6> > Vector6Vector;
   

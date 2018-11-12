@@ -6,15 +6,13 @@
 namespace guess {
 
   struct LaserBeam {
-    LaserBeam(const real& value_,
-              const Label label_) {
-      value = value_;
+    LaserBeam(const Label label_ = Label::Unknown,
+              const real& value_ = 0.0) {
       label = label_;
+      value = value_;
     }
     real value;
     Label label;
-  protected:
-    LaserBeam();
   };
 
   struct LaserReading : public std::vector<LaserBeam> {
