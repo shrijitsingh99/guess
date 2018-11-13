@@ -7,10 +7,7 @@ set(CMAKE_BUILD_TYPE Release)
 find_package(Eigen3 REQUIRED)
 include_directories(${EIGEN3_INCLUDE_DIR})
 
-add_library(guess_lib SHARED
-  laser_reading.hpp
-  point.hpp
-  projector2d.h projector2d.cpp
-  )
+include_directories(guess_lib)
 
-#target_link_libraries()
+add_subdirectory(guess_lib)
+add_subdirectory(guess_app)
