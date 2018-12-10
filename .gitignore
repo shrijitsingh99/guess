@@ -1,3 +1,5 @@
+src/py/mnist/
+src/py/mnist_*
 src/py/.ipynb_checkpoints/
 build/
 *~
