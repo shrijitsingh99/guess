@@ -20,11 +20,20 @@ from keras.utils import plot_model
 from keras import backend as K
 
 class LaserScans:
-    def __init__(self, datafile, clip_scans_at=8, scan_bound_percentage=0.15, verbose=False):
+    def __init__(self, verbose=False):
         self.verbose = verbose
-        self.data = np.loadtxt(datafile).astype('float32')
+        self.timesteps = None
+        self.cmd_vel = None
+        self.scans = None
+        self.scan_bound_percentage = 0
+
+    def load(self, datafile,
+             clip_scans_at=None, scan_center_range=None, scan_bound_percentage=None):
         self.clip_scans_at = clip_scans_at
+        self.scan_center_range = scan_center_range
         self.scan_bound_percentage = scan_bound_percentage
+        self.data = np.loadtxt(datafile).astype('float32')
+
         self.timesteps = self.data[:, :1]
         self.cmd_vel = self.data[:, 1:7]
         self.scans = self.data[:, 7:]
@@ -32,31 +41,42 @@ class LaserScans:
         if self.verbose:
             print("timesteps --", self.timesteps.shape)
             print("cmd_vel --", self.cmd_vel.shape)
-            print("scans --", self.scans.shape, "ranges [", np.max(self.scans), "-", np.min(self.scans), "]")
+            print("scans --", self.scans.shape, "range [", np.max(self.scans), "-", np.min(self.scans), "]")
 
-        np.clip(self.scans, a_min=0, a_max=clip_scans_at, out=self.scans)
+        if not self.clip_scans_at is None:
+            np.clip(self.scans, a_min=0, a_max=self.clip_scans_at, out=self.scans)
 
-        # bounds are due to the embodiment of the particular robot used, this should not exist!!!
-        min_bound = int(self.scan_bound_percentage*self.scans.shape[1])
-        max_bound = int(self.scans.shape[1] - self.scan_bound_percentage*self.scans.shape[1])
-        if self.verbose: print("scans bounds (min, max)=", min_bound, max_bound)
-
-        self.scans = self.scans[:, min_bound:max_bound] / self.clip_scans_at    # normalization makes the vae work
+        if not self.scan_center_range is None:
+            i_range = 0.5*self.scans.shape[1] - 0.5*self.scan_center_range
+            self.scan_bound_percentage = 1.0 - (float(self.scan_center_range)/self.scans.shape[1])
+            self.scan_bound_percentage = 0.5*self.scan_bound_percentage
+            self.scans = self.scans[:, int(i_range):int(i_range) + self.scan_center_range]
+        else:
+            if self.scan_bound_percentage != 0:
+                min_bound = int(self.scan_bound_percentage*self.scans.shape[1])
+                max_bound = int(self.scans.shape[1] - self.scan_bound_percentage*self.scans.shape[1])
+                self.scans = self.scans[:, min_bound:max_bound]
+                if self.verbose: print("scans bounds (min, max)=", min_bound, max_bound)
+        self.scans = self.scans / self.clip_scans_at    # normalization makes the vae work
 
     def originalScansDim(self):
+        if self.scans is None: return -1
         return self.scans.shape[1]
 
     def timesteps(self):
+        if self.timesteps is None: return np.zeros((1, 1))
         return self.timesteps
 
     def cmdVel(self):
+        if self.cmd_vel is None: return np.zeros((1, 1))
         return self.cmd_vel
 
     def getScans(self, split_at=0):
+        if self.scans is None: return np.zeros((1, 1))
         if split_at == 0: return self.scans
 
-        x_train = self.scans[:int(self.scans.shape[0]*split_at),:]
-        x_test = self.scans[int(self.scans.shape[0]*split_at):,:]
+        x_train = self.scans[:int(self.scans.shape[0]*split_at), :]
+        x_test = self.scans[int(self.scans.shape[0]*split_at):, :]
 
         if self.verbose:
             print("scans train:", x_train.shape)
@@ -93,7 +113,7 @@ class LaserScans:
         plt.figure(figsize=(15, 5))
         plt.subplot(121)
         y_axis = scan
-        if y != None:
+        if not y is None:
             y_axis = y
             plt.plot(x_axis, y_axis, color='lightgray')
 
@@ -305,25 +325,28 @@ class GAN:
             self.ADV = self.adversarial_model()
 
     def fitModelStep(self, x, x_label, train_steps=10, batch_sz=32, verbose=None):
-        for i in range(train_steps):
+        for b in range(0, x.shape[0], batch_sz):
+            if b + batch_sz >= x.shape[0]: continue
+            for t in range(train_steps):
             # TOADD noise !!!!!!!! todo
             # noise = np.random.uniform(-1.0, 1.0, size=[batch_sz, self.latent_input_dim])
+                real = np.zeros((batch_sz, self.input_shape[0], 1, 1))
+                real[:, :, 0, 0] = x_label[b:b + batch_sz]
+                fake = self.GEN.predict(x[b:b + batch_sz])
 
-            real = np.zeros((batch_sz, self.input_shape[0], 1, 1))
-            real[:, :x_label.shape[1], 0, 0] = x_label
-            fake = self.GEN.predict(x)
+                x_train = np.concatenate((real, fake))
+                y = np.ones([x_train.shape[0], 1])
+                y[batch_sz:, :] = 0
 
-            x_train = np.concatenate((real, fake))
-            y = np.ones([x_train.shape[0], 1])
-            y[batch_sz:, :] = 0
-            d_loss = self.DIS.train_on_batch(x_train, y)
+                d_loss = self.DIS.train_on_batch(x_train, y)
 
-            y = np.ones([batch_sz, 1])
-            a_loss = self.ADV.train_on_batch(x, y)
+                y = np.ones([batch_sz, 1])
+                a_loss = self.ADV.train_on_batch(x[b:b + batch_sz], y)
 
-            log_mesg = "%d: [D loss: %f, acc: %f]" % (i, d_loss[0], d_loss[1])
-            log_mesg = "%s  [A loss: %f, acc: %f]" % (log_mesg, a_loss[0], a_loss[1])
-            if self.verbose: print(log_mesg)
+                log_mesg = "%d/%d: [D loss: %f, acc: %f]" % \
+                           (b + batch_sz, x.shape[0], d_loss[0], d_loss[1])
+                log_mesg = "%s  [A loss: %f, acc: %f]" % (log_mesg, a_loss[0], a_loss[1])
+                if not self.verbose and t == train_steps - 1: print(log_mesg)
 
     def latentInputDim(self):
         return self.latent_input_dim
@@ -334,11 +357,13 @@ class GAN:
     def generate(self, x):
         return self.GEN.predict(x)[:, :, 0, 0]
 
-if __name__ == "__main__" and False:
+if __name__ == "__main__":
     # DIAG_first_floor.txt
     # diag_labrococo.txt
     # diag_underground.txt
-    ls = LaserScans("../../dataset/diag_underground.txt", verbose=True)
+    ls = LaserScans(verbose=True)
+    ls.load("../../dataset/diag_underground.txt",
+             clip_scans_at=8, scan_center_range=512)
 
     vae = VAE()
     vae.buildModel(ls.originalScansDim())
@@ -355,7 +380,7 @@ if __name__ == "__main__" and False:
     dscan = vae.predictDecoder(z_latent)
     ls.plotScan(scan[0], dscan[0])
 
-    input_shape = ((ls.originalScansDim() + 8), 1, 1,)  # :, 504 + 8, # scan dim + padding
+    input_shape = (ls.originalScansDim(), 1, 1,)
     latent_dim = gan_batch_sz*(10 + 6) # latent input dim + cmdVel from vae
 
     gan = GAN(verbose=False)
@@ -365,14 +390,14 @@ if __name__ == "__main__" and False:
     x_latent = np.concatenate((z_latent, cmd_vels), axis=1)
     x_latent = np.reshape(x_latent, (batch_sz, latent_dim))
 
-    next_scan = np.zeros((batch_sz, (ls.originalScansDim() + 8)))
+    next_scan = np.zeros((batch_sz, ls.originalScansDim()))
     for ns in range(batch_sz):
         next_scan[ns, :ls.originalScansDim()] = x[(scan_idx + gan_batch_sz + ns*gan_batch_sz + 1)]
 
     gan.fitModelStep(x_latent, next_scan, train_steps=10, batch_sz=batch_sz)
 
     gscan = gan.generate(x_latent)
-    ls.plotScan(next_scan[0, :504])
-    ls.plotScan(gscan[0, :504])
+    ls.plotScan(next_scan[0, :])
+    ls.plotScan(gscan[0, :])
 
     plt.show()
