@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import argparse
 import os
+import time
 
 from keras.layers import Dense, Activation, Flatten, Reshape
 from keras.layers import Conv2D, Conv2DTranspose, UpSampling2D, LSTM, TimeDistributed
@@ -18,6 +19,19 @@ from keras.optimizers import Adam, RMSprop
 from keras.utils import plot_model
 
 from keras import backend as K
+
+class ElapsedTimer:
+    def __init__(self):
+        self.start_time = time.time()
+    def __elapsed(self,sec):
+        if sec < 60:
+            return str(int(sec)) + " sec"
+        elif sec < (60 * 60):
+            return str(sec / 60) + " min"
+        else:
+            return str(sec / (60 * 60)) + " hr"
+    def elapsed_time(self):
+        return self.__elapsed(time.time() - self.start_time)
 
 class LaserScans:
     def __init__(self, verbose=False):
@@ -48,6 +62,7 @@ class LaserScans:
 
         if not self.scan_center_range is None:
             i_range = 0.5*self.scans.shape[1] - 0.5*self.scan_center_range
+            i_range = i_range + 20
             self.scan_bound_percentage = 1.0 - (float(self.scan_center_range)/self.scans.shape[1])
             self.scan_bound_percentage = 0.5*self.scan_bound_percentage
             self.scans = self.scans[:, int(i_range):int(i_range) + self.scan_center_range]
@@ -58,6 +73,11 @@ class LaserScans:
                 self.scans = self.scans[:, min_bound:max_bound]
                 if self.verbose: print("scans bounds (min, max)=", min_bound, max_bound)
         self.scans = self.scans / self.clip_scans_at    # normalization makes the vae work
+
+    def initRand(self, rand_scans_num, scan_dim, clip_scans_at=1.0):
+        self.scans = np.random.uniform(0.0, clip_scans_at, size=[rand_scans_num, scan_dim])
+        self.cmd_vel = np.zeros((rand_scans_num, 6))
+        self.timesteps = np.zeros((rand_scans_num, 1))
 
     def originalScansDim(self):
         if self.scans is None: return -1
@@ -264,7 +284,7 @@ class GAN:
         depth = 64+64+64+64
         dim = 16
 
-        self.G.add(Dense(dim*depth, input_dim=self.latent_input_dim))
+        self.G.add(Dense(dim*depth, input_dim=2*self.latent_input_dim))  # input + noise
         self.G.add(BatchNormalization(momentum=0.9))
         self.G.add(Activation('relu'))
         self.G.add(Reshape((dim, 1, depth)))
@@ -324,15 +344,19 @@ class GAN:
             self.GEN = self.generator()
             self.ADV = self.adversarial_model()
 
-    def fitModelStep(self, x, x_label, train_steps=10, batch_sz=32, verbose=None):
+    def fitModel(self, x, x_label, train_steps=10, batch_sz=32, verbose=None):
+        if verbose is None: verbose = self.verbose
         for b in range(0, x.shape[0], batch_sz):
-            if b + batch_sz >= x.shape[0]: continue
+            if b + batch_sz > x.shape[0]: continue
             for t in range(train_steps):
-            # TOADD noise !!!!!!!! todo
-            # noise = np.random.uniform(-1.0, 1.0, size=[batch_sz, self.latent_input_dim])
+                noise = np.random.uniform(-1.0, 1.0, size=[batch_sz, self.latent_input_dim])
+                gen_in = np.empty((batch_sz, 2*self.latent_input_dim))
+                gen_in[:, ::2] = x[b:b + batch_sz]
+                gen_in[:, 1::2] = noise
+
                 real = np.zeros((batch_sz, self.input_shape[0], 1, 1))
                 real[:, :, 0, 0] = x_label[b:b + batch_sz]
-                fake = self.GEN.predict(x[b:b + batch_sz])
+                fake = self.GEN.predict(gen_in)
 
                 x_train = np.concatenate((real, fake))
                 y = np.ones([x_train.shape[0], 1])
@@ -341,12 +365,12 @@ class GAN:
                 d_loss = self.DIS.train_on_batch(x_train, y)
 
                 y = np.ones([batch_sz, 1])
-                a_loss = self.ADV.train_on_batch(x[b:b + batch_sz], y)
+                a_loss = self.ADV.train_on_batch(gen_in, y)
 
                 log_mesg = "%d/%d: [D loss: %f, acc: %f]" % \
                            (b + batch_sz, x.shape[0], d_loss[0], d_loss[1])
                 log_mesg = "%s  [A loss: %f, acc: %f]" % (log_mesg, a_loss[0], a_loss[1])
-                if not self.verbose and t == train_steps - 1: print(log_mesg)
+                if verbose and t == train_steps - 1: print(log_mesg)
 
     def latentInputDim(self):
         return self.latent_input_dim
@@ -355,7 +379,11 @@ class GAN:
         return self.original_dim
 
     def generate(self, x):
-        return self.GEN.predict(x)[:, :, 0, 0]
+        noise = np.random.uniform(-1.0, 1.0, size=[x.shape[0], self.latent_input_dim])
+        gen_in = np.empty((x.shape[0], 2*self.latent_input_dim))
+        gen_in[:, ::2] = x
+        gen_in[:, 1::2] = np.zeros((x.shape[0], self.latent_input_dim)) # noise
+        return self.GEN.predict(gen_in)[:, :, 0, 0]
 
 if __name__ == "__main__":
     # DIAG_first_floor.txt
@@ -372,7 +400,7 @@ if __name__ == "__main__":
     vae.fitModel(x, x_test=x_test)
 
     batch_sz = 8
-    gan_batch_sz = 16
+    gan_batch_sz = 8
     scan_idx = 100
 
     scan = x[scan_idx:(scan_idx + batch_sz*gan_batch_sz)]
@@ -394,7 +422,7 @@ if __name__ == "__main__":
     for ns in range(batch_sz):
         next_scan[ns, :ls.originalScansDim()] = x[(scan_idx + gan_batch_sz + ns*gan_batch_sz + 1)]
 
-    gan.fitModelStep(x_latent, next_scan, train_steps=10, batch_sz=batch_sz)
+    gan.fitModel(x_latent, next_scan, train_steps=5, batch_sz=batch_sz)
 
     gscan = gan.generate(x_latent)
     ls.plotScan(next_scan[0, :])
