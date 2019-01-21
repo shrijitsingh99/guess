@@ -7,7 +7,7 @@ import argparse
 import os
 import time
 
-from keras.layers import Dense, Activation, Flatten, Reshape
+from keras.layers import Dense, Embedding, Activation, Flatten, Reshape
 from keras.layers import Conv2D, Conv2DTranspose, UpSampling2D, LSTM, TimeDistributed
 from keras.layers import LeakyReLU, Dropout
 from keras.layers import BatchNormalization
@@ -241,12 +241,35 @@ class GAN:
         self.verbose = verbose
         self.D = None   # discriminator
         self.G = None   # generator
-        self.RG = None  # recurrent generator
         self.DM = None  # discriminator model
         self.AM = None  # adversarial model
-        self.RAM = None  # recurrent adversarial model
 
-    # (W−F+2P)/S+1
+    def discriminatorThin(self):
+        if self.D: return self.D
+        self.D = Sequential()
+        depth = 16
+        dropout = 0.4
+
+        self.D.add(Conv2D(depth, 5, strides=2,
+                          input_shape=self.input_shape, padding='same'))
+        self.D.add(LeakyReLU(alpha=0.2))
+        self.D.add(Dropout(dropout))
+
+        self.D.add(Conv2D(depth*4, 5, strides=2, padding='same'))
+        self.D.add(LeakyReLU(alpha=0.2))
+        self.D.add(Dropout(dropout))
+
+        self.D.add(Conv2D(depth*8, 5, strides=1, padding='same'))
+        self.D.add(LeakyReLU(alpha=0.2))
+        self.D.add(Dropout(dropout))
+
+        # Out: 1-dim probability
+        self.D.add(Flatten())
+        self.D.add(Dense(1))
+        self.D.add(Activation('sigmoid'))
+        if self.verbose: self.D.summary()
+        return self.D
+
     def discriminator(self):
         if self.D: return self.D
         self.D = Sequential()
@@ -276,6 +299,35 @@ class GAN:
         self.D.add(Activation('sigmoid'))
         if self.verbose: self.D.summary()
         return self.D
+
+    def generatorThin(self):
+        if self.G: return self.G
+        self.G = Sequential()
+        dropout = 0.4
+        depth = 64+64+64
+        dim = 16
+
+        self.G.add(Dense(dim*depth, input_dim=2*self.latent_input_dim))  # input + noise
+        self.G.add(BatchNormalization(momentum=0.9))
+        self.G.add(Activation('relu'))
+        self.G.add(Reshape((dim, 1, depth)))
+        self.G.add(Dropout(dropout))
+
+        self.G.add(UpSampling2D(size=(4, 1)))
+        self.G.add(Conv2DTranspose(int(depth/4), 5, padding='same'))
+        self.G.add(BatchNormalization(momentum=0.9))
+        self.G.add(Activation('relu'))
+
+        self.G.add(UpSampling2D(size=(4, 1)))
+        self.G.add(Conv2DTranspose(int(depth/8), 5, padding='same'))
+        self.G.add(BatchNormalization(momentum=0.9))
+        self.G.add(Activation('relu'))
+
+        self.G.add(UpSampling2D(size=(2, 1)))
+        self.G.add(Conv2DTranspose(1, 5, padding='same'))
+        self.G.add(Activation('sigmoid'))
+        if self.verbose: self.G.summary()
+        return self.G
 
     def generator(self):
         if self.G: return self.G
@@ -311,38 +363,38 @@ class GAN:
         if self.verbose: self.G.summary()
         return self.G
 
-    def discriminator_model(self):
+    def discriminator_model(self, model_id="default"):
         if self.DM: return self.DM
         optimizer = RMSprop(lr=0.0002, decay=6e-8)
         self.DM = Sequential()
-        self.DM.add(self.discriminator())
+        if model_id == "thin": self.DM.add(self.discriminatorThin())
+        else: self.DM.add(self.discriminator())
         self.DM.compile(loss='binary_crossentropy',
                         optimizer=optimizer, metrics=['accuracy'])
         return self.DM
 
-    def adversarial_model(self):
+    def adversarial_model(self, model_id="default"):
         if self.AM: return self.AM
         optimizer = RMSprop(lr=0.0001, decay=3e-8)
         self.AM = Sequential()
-        self.AM.add(self.generator())
-        self.AM.add(self.discriminator())
+        if model_id == "thin":
+            self.AM.add(self.generatorThin())
+            self.AM.add(self.discriminatorThin())
+        else:
+            self.AM.add(self.generator())
+            self.AM.add(self.discriminator())
         self.AM.compile(loss='binary_crossentropy',
                         optimizer=optimizer, metrics=['accuracy'])
         return self.AM
 
-    def buildModel(self, input_shape, latent_input_dim, recurrent_generator=False):
+    def buildModel(self, input_shape, latent_input_dim, model_id="default"):
         self.input_shape = input_shape
         self.latent_input_dim = latent_input_dim
 
-        self.DIS = self.discriminator_model()
-
-        if recurrent_generator:
-            pass
-            # self.GEN = self.recurrent_generator()
-            # self.ADV = self.recurrent_adversarial_model()
-        else:
-            self.GEN = self.generator()
-            self.ADV = self.adversarial_model()
+        self.DIS = self.discriminator_model(model_id)
+        if model_id == "thin": self.GEN = self.generatorThin()
+        else: self.GEN = self.generator()
+        self.ADV = self.adversarial_model(model_id)
 
     def fitModel(self, x, x_label, train_steps=10, batch_sz=32, verbose=None):
         if verbose is None: verbose = self.verbose
@@ -382,7 +434,145 @@ class GAN:
         noise = np.random.uniform(-1.0, 1.0, size=[x.shape[0], self.latent_input_dim])
         gen_in = np.empty((x.shape[0], 2*self.latent_input_dim))
         gen_in[:, ::2] = x
-        gen_in[:, 1::2] = np.zeros((x.shape[0], self.latent_input_dim)) # noise
+        gen_in[:, 1::2] = noise
+        return self.GEN.predict(gen_in)[:, :, 0, 0]
+
+class RGAN:
+    def __init__(self, verbose=False):
+        self.verbose = verbose
+        self.D = None   # discriminator
+        self.G = None   # generator
+        self.DM = None  # discriminator model
+        self.AM = None  # adversarial model
+
+    def discriminator(self):
+        if self.D: return self.D
+        self.D = Sequential()
+        depth = 16
+        dropout = 0.4
+
+        self.D.add(Conv2D(depth, 5, strides=2,
+                          input_shape=self.input_shape, padding='same'))
+        self.D.add(LeakyReLU(alpha=0.2))
+        self.D.add(Dropout(dropout))
+
+        self.D.add(Conv2D(depth*4, 5, strides=2, padding='same'))
+        self.D.add(LeakyReLU(alpha=0.2))
+        self.D.add(Dropout(dropout))
+
+        self.D.add(Conv2D(depth*8, 5, strides=1, padding='same'))
+        self.D.add(LeakyReLU(alpha=0.2))
+        self.D.add(Dropout(dropout))
+
+        self.D.add(Flatten())
+        self.D.add(Dense(1))
+        self.D.add(Activation('sigmoid'))
+        if self.verbose: self.D.summary()
+        return self.D
+
+    def generator(self):
+        if self.G: return self.G
+        dropout = 0.4
+        depth = 64+64
+        dim = 16
+
+        self.G = Sequential()
+        self.G.add(LSTM(depth, input_shape=(self.input_length_dim, 2*self.latent_input_dim),
+                        return_sequences=True,
+                        activation='tanh', recurrent_activation='hard_sigmoid'))
+        self.G.add(LSTM(depth, return_sequences=True,
+                        activation='tanh', recurrent_activation='hard_sigmoid'))
+        self.G.add(Dense(dim*depth))
+        self.G.add(BatchNormalization(momentum=0.9))
+        self.G.add(Activation('relu'))
+        self.G.add(Reshape((dim, 1, self.input_length_dim*depth)))
+        self.G.add(Dropout(dropout))
+
+        self.G.add(UpSampling2D(size=(2, 1)))
+        self.G.add(Conv2DTranspose(int(depth/4), 5, padding='same'))
+        self.G.add(BatchNormalization(momentum=0.9))
+        self.G.add(Activation('relu'))
+
+        self.G.add(UpSampling2D(size=(4, 1)))
+        self.G.add(Conv2DTranspose(int(depth/8), 5, padding='same'))
+        self.G.add(BatchNormalization(momentum=0.9))
+        self.G.add(Activation('relu'))
+
+        self.G.add(UpSampling2D(size=(4, 1)))
+        self.G.add(Conv2DTranspose(1, 5, padding='same'))
+        self.G.add(Activation('sigmoid'))
+
+        if self.verbose: self.G.summary()
+        return self.G
+
+    def discriminator_model(self):
+        if self.DM: return self.DM
+        optimizer = RMSprop(lr=0.0002, decay=6e-8)
+        self.DM = Sequential()
+        self.DM.add(self.discriminator())
+        self.DM.compile(loss='binary_crossentropy',
+                        optimizer=optimizer, metrics=['accuracy'])
+        return self.DM
+
+    def adversarial_model(self):
+        if self.AM: return self.AM
+        optimizer = RMSprop(lr=0.0001, decay=3e-8)
+        self.AM = Sequential()
+        self.AM.add(self.generator())
+        self.AM.add(self.discriminator())
+        self.AM.compile(loss='binary_crossentropy',
+                        optimizer=optimizer, metrics=['accuracy'])
+        return self.AM
+
+    def buildModel(self, input_shape, latent_input_dim, input_length_dim):
+        self.input_shape = input_shape
+        self.input_length_dim = input_length_dim
+        self.latent_input_dim = latent_input_dim
+
+        self.DIS = self.discriminator_model()
+        self.GEN = self.generator()
+        self.ADV = self.adversarial_model()
+
+    def fitModel(self, x, x_label, train_steps=10, batch_sz=32, verbose=None):
+        if verbose is None: verbose = self.verbose
+        for b in range(0, x.shape[0], batch_sz):
+            if b + batch_sz > x.shape[0]: continue
+            for t in range(train_steps):
+                noise = np.random.uniform(-1.0, 1.0,
+                                          size=[batch_sz, self.input_length_dim, self.latent_input_dim])
+                gen_in = np.empty((batch_sz, self.input_length_dim, 2*self.latent_input_dim))
+                gen_in[:, :, ::2] = x[b:b + batch_sz]
+                gen_in[:, :, 1::2] = noise
+
+                real = np.zeros((batch_sz, self.input_shape[0], 1, 1))
+                real[:, :, 0, 0] = x_label[b:b + batch_sz]
+                fake = self.GEN.predict(gen_in)
+
+                x_train = np.concatenate((real, fake))
+                y = np.ones([x_train.shape[0], 1])
+                y[batch_sz:, :] = 0
+
+                d_loss = self.DIS.train_on_batch(x_train, y)
+
+                y = np.ones([batch_sz, 1])
+                a_loss = self.ADV.train_on_batch(gen_in, y)
+
+                log_mesg = "%d/%d: [D loss: %f, acc: %f]" % \
+                           (b + batch_sz, x.shape[0], d_loss[0], d_loss[1])
+                log_mesg = "%s  [A loss: %f, acc: %f]" % (log_mesg, a_loss[0], a_loss[1])
+                if verbose and t == train_steps - 1: print(log_mesg)
+
+    def latentInputDim(self):
+        return self.latent_input_dim
+
+    def inputDim(self):
+        return self.original_dim
+
+    def generate(self, x):
+        noise = np.random.uniform(-1.0, 1.0, size=[x.shape[0], self.input_length_dim, self.latent_input_dim])
+        gen_in = np.empty((x.shape[0], self.input_length_dim, 2*self.latent_input_dim))
+        gen_in[:, :, ::2] = x
+        gen_in[:, :, 1::2] = noise
         return self.GEN.predict(gen_in)[:, :, 0, 0]
 
 if __name__ == "__main__":
@@ -412,7 +602,7 @@ if __name__ == "__main__":
     latent_dim = gan_batch_sz*(10 + 6) # latent input dim + cmdVel from vae
 
     gan = GAN(verbose=False)
-    gan.buildModel(input_shape, latent_dim, recurrent_generator=False)
+    gan.buildModel(input_shape, latent_dim)
 
     cmd_vels = ls.cmdVel()[scan_idx:(scan_idx + batch_sz*gan_batch_sz)]
     x_latent = np.concatenate((z_latent, cmd_vels), axis=1)
