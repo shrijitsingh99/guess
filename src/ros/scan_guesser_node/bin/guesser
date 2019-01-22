@@ -1,0 +1,42 @@
+#! /usr/bin/env python
+# coding: utf-8
+
+
+import rospy
+import numpy as np
+from geometry_msgs.msg import Twist
+from sensor_msgs.msg import LaserScan
+import scan_guesser_node.guesser_utils
+
+from scan_guesser import ScanGuesser
+
+cmd_vel = np.zeros((6, 1))
+scan_batch = np.zeros((8, 512))
+
+def cmdVelCb(data):
+        global cmd_vel
+        cmd_vel[0] = data.linear.x
+        cmd_vel[1] = data.linear.y
+        cmd_vel[2] = data.linear.z
+        cmd_vel[3] = data.angular.x
+        cmd_vel[4] = data.angular.y
+        cmd_vel[5] = data.angular.z
+
+def scanCb(data):
+        global scan_batch
+        # data.header.stamp
+        print np.array(data.ranges).shape
+
+def guesserSubscriber():
+        rospy.init_node('guesser', anonymous=True)
+        rospy.Subscriber("/scan", LaserScan, scanCb)
+        rospy.Subscriber("/cmd_vel_mux/input/teleop", Twist, cmdVelCb)
+        rospy.spin()
+
+if __name__ == '__main__':
+        scan_guesser_node.guesser_utils.say('Rick, jez')
+
+        try:
+                guesserSubscriber()
+        except rospy.ROSInterruptException:
+                pass

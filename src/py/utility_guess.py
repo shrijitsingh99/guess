@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-import numpy as np
-import matplotlib.pyplot as plt
-import argparse
 import os
 import time
+import argparse
+import numpy as np
+import matplotlib.pyplot as plt
 
 from keras.layers import Dense, Embedding, Activation, Flatten, Reshape
 from keras.layers import Conv2D, Conv2DTranspose, UpSampling2D, LSTM, TimeDistributed
