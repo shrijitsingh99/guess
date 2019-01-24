@@ -25,7 +25,7 @@ class ElapsedTimer:
         self.start_time = time.time()
     def __elapsed(self,sec):
         if sec < 60:
-            return str(int(sec)) + " sec"
+            return str(sec) + " sec"
         elif sec < (60 * 60):
             return str(sec / 60) + " min"
         else:

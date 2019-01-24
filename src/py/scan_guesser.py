@@ -2,6 +2,7 @@
 # coding: utf-8
 
 import numpy as np
+from threading import Thread, Lock
 from utility_guess import LaserScans, VAE, GAN, RGAN, ElapsedTimer
 
 
@@ -31,6 +32,36 @@ class ScanGuesser:
                        intermediate_dim=vae_intermediate_dim,
                        verbose=verbose)
         self.__initModels()
+
+        self.update_mtx = Lock()
+        self.updating_model = False
+        self.thr_scans = None
+        self.thr_cmd_vel = None
+        self.thr = Thread(target=self.__updateThr)
+
+    def __updateThr(self):
+        print("Starting update thread...")
+        while True:
+            scans = None
+            cmd_vel = None
+            self.update_mtx.acquire()
+            if not self.updating_model:
+                scans = self.thr_scans
+                cmd_vel = self.thr_cmd_vel
+                self.updating_model = True
+            self.update_mtx.release()
+
+            if not scans is None and not cmd_vel is None:
+                timer = ElapsedTimer()
+                print("Models updated in", end='')
+                self.__updateVae(scans)
+                self.__updateGan(scans, cmd_vel, False) # False : verbose
+                print(" ", timer.elapsed_time())
+
+            self.update_mtx.acquire()
+            self.updating_model = False
+            self.update_mtx.release()
+        print("Terminating update thread.")
 
     def __initModels(self):
         self.vae.buildModel(self.original_scan_dim)
@@ -112,8 +143,8 @@ class ScanGuesser:
                 scans = self.ls.getScans()
                 cmd_vel = self.ls.cmdVel()
             else:
-                scans = self.ls.getScans()[:self.scan_batch_sz*self.gan_batch_sz*init_scan_batch_num + self.gen_scan_ahead_step - 1]  # reshape_step = 1
-                cmd_vel = self.ls.cmdVel()[:self.scan_batch_sz*self.gan_batch_sz*init_scan_batch_num + self.gen_scan_ahead_step - 1]  # reshape_step = 1
+                scans = self.ls.getScans()[:self.gan_batch_sz*self.scan_batch_sz*init_scan_batch_num + self.gen_scan_ahead_step - 1]  # reshape_step = 1
+                cmd_vel = self.ls.cmdVel()[:self.gan_batch_sz*self.scan_batch_sz*init_scan_batch_num + self.gen_scan_ahead_step - 1]  # reshape_step = 1
 
             timer = ElapsedTimer()
             print("Initializing VAE... ", end='')
@@ -123,10 +154,10 @@ class ScanGuesser:
             self.__updateGan(scans, cmd_vel, verbose=True)
             print("done.")
             print("Models updated in", timer.elapsed_time())
+            self.thr.start()
 
     def addScans(self, scans, cmd_vel):
-        if scans.shape[0] < self.scan_batch_sz*2: return
-        timer = ElapsedTimer()
+        if scans.shape[0] < self.scan_batch_sz: return
         if self.online_scans is None:
             self.online_scans = scans
             self.online_cmd_vel = cmd_vel
@@ -134,9 +165,25 @@ class ScanGuesser:
             self.online_scans = np.concatenate((self.online_scans, scans))
             self.online_cmd_vel = np.concatenate((self.online_cmd_vel, cmd_vel))
 
-        self.__updateVae(scans)
-        self.__updateGan(scans, cmd_vel, True)
-        print("Models updated in", timer.elapsed_time())
+        if self.online_scans.shape[0] < self.gan_batch_sz*self.scan_batch_sz + self.gen_scan_ahead_step:
+            return
+        if self.online_scans.shape[0]%self.gan_batch_sz*self.scan_batch_sz == 0:
+            scan_idx = self.online_scans.shape[0] - self.gan_batch_sz*self.scan_batch_sz - self.gen_scan_ahead_step
+            self.update_mtx.acquire()
+            if self.updating_model:
+                self.update_mtx.release()
+            else:
+                self.updating_model = False
+                self.thr_scans = self.online_scans[scan_idx:]
+                self.thr_cmd_vel = self.online_cmd_vel[scan_idx:]
+                self.update_mtx.release()
+
+    def addRawScans(self, raw_scans, cmd_vel):
+        if raw_scans.shape[0] < self.scan_batch_sz: return
+        scans = raw_scans
+        np.clip(scans, a_min=0, a_max=self.clip_scans_at, out=scans)
+        scans = scans / self.clip_scans_at
+        self.addScans(scans, cmd_vel)
 
     def simStep(self):
         print("self.sim_step --", self.sim_step)
@@ -152,6 +199,7 @@ class ScanGuesser:
         return self.vae.predictDecoder(scan_latent)
 
     def generateScan(self, scans, cmd_vel):
+        if scans.shape[0] < self.scan_batch_sz: return np.zeros((1,))
         z_latent = self.encodeScan(scans)
         if self.net_model == "lstm":
             x_latent, _ = self.__reshapeRGanInput(None, cmd_vel, z_latent)
@@ -159,45 +207,61 @@ class ScanGuesser:
             x_latent, _ = self.__reshapeGanInput(None, cmd_vel, z_latent)
         return self.gan.generate(x_latent)
 
+    def generateRawScan(self, raw_scans, cmd_vel):
+        if self.verbose: timer = ElapsedTimer()
+        if raw_scans.shape[0] < self.scan_batch_sz: return np.zeros((1,))
+        scans = raw_scans
+        np.clip(scans, a_min=0, a_max=self.clip_scans_at, out=scans)
+        scans = scans / self.clip_scans_at
+
+        z_latent = self.encodeScan(scans)
+        if self.net_model == "lstm":
+            x_latent, _ = self.__reshapeRGanInput(None, cmd_vel, z_latent)
+        else:
+            x_latent, _ = self.__reshapeGanInput(None, cmd_vel, z_latent)
+        gen = self.gan.generate(x_latent)
+        if self.verbose: print("Prediction in", timer.elapsed_time())
+        return gen
+
     def getScans(self):
-        return self.ls.getScans()
+        return self.online_scans()
 
     def cmdVel(self):
-        return self.ls.cmdVel()
+        return self.online_cmd_vel()
 
     def plotScan(self, scan, decoded_scan=None):
         if decoded_scan is None: self.ls.plotScan(scan)
         else: self.ls.plotScan(scan, decoded_scan)
 
-if __name__ == "__main__":
-    print("ScanGuesser test-main")
-    scan_ahead_step = 5
-    scan_seq_batch = 8
-    guesser = ScanGuesser(512, # original_scan_dim
-                          net_model="lstm",  # default; thin; lstm
-                          scan_batch_sz=scan_seq_batch,  # sequence of scans to concatenate to create one input
-                          gen_scan_ahead_step=scan_ahead_step,  # numbr of 'scansteps' to look ahaed for generation
-                          gan_batch_sz=32, gan_train_steps=10)
-    # DIAG_first_floor.txt
-    # diag_labrococo.txt
-    # diag_underground.txt
-    guesser.setInitDataset("../../dataset/diag_underground.txt", init_models=True, init_scan_batch_num=1)
+# if __name__ == "__main__":
+#     print("ScanGuesser test-main")
+#     scan_ahead_step = 5
+#     scan_seq_batch = 8
+#     guesser = ScanGuesser(512, # original_scan_dim
+#                           net_model="lstm",  # default; thin; lstm
+#                           scan_batch_sz=scan_seq_batch,  # sequence of scans to concatenate to create one input
+#                           gen_scan_ahead_step=scan_ahead_step,  # numbr of 'scansteps' to look ahaed for generation
+#                           gan_batch_sz=32, gan_train_steps=10)
+#     # DIAG_first_floor.txt
+#     # diag_labrococo.txt
+#     # diag_underground.txt
+#     guesser.setInitDataset("../../dataset/diag_underground.txt", init_models=True, init_scan_batch_num=1)
 
-    # z_latent = guesser.encodeScan(guesser.getScans())
-    # dscans = guesser.decodeScan(z_latent)
-    # guesser.plotScan(guesser.getScans()[0], dscans[0])
+#     # z_latent = guesser.encodeScan(guesser.getScans())
+#     # dscans = guesser.decodeScan(z_latent)
+#     # guesser.plotScan(guesser.getScans()[0], dscans[0])
 
-scan_idx = 1000
-gscan = guesser.generateScan(guesser.getScans()[scan_idx:scan_idx + scan_seq_batch + scan_ahead_step - 1],
-                             guesser.cmdVel()[scan_idx:scan_idx + scan_seq_batch + scan_ahead_step - 1])
+# scan_idx = 1000
+# gscan = guesser.generateScan(guesser.getScans()[scan_idx:scan_idx + scan_seq_batch + scan_ahead_step - 1],
+#                              guesser.cmdVel()[scan_idx:scan_idx + scan_seq_batch + scan_ahead_step - 1])
 
-guesser.plotScan(guesser.getScans()[scan_idx + scan_ahead_step])
-guesser.plotScan(gscan[0, :])
+# guesser.plotScan(guesser.getScans()[scan_idx + scan_ahead_step])
+# guesser.plotScan(gscan[0, :])
 
-for i in range(11):
-    guesser.simStep()
-    gscan = guesser.generateScan(guesser.getScans()[scan_idx:scan_idx + scan_seq_batch + scan_ahead_step - 1],
-                                 guesser.cmdVel()[scan_idx:scan_idx + scan_seq_batch + scan_ahead_step - 1])
+# for i in range(11):
+#     guesser.simStep()
+#     gscan = guesser.generateScan(guesser.getScans()[scan_idx:scan_idx + scan_seq_batch + scan_ahead_step - 1],
+#                                  guesser.cmdVel()[scan_idx:scan_idx + scan_seq_batch + scan_ahead_step - 1])
 
-    # guesser.plotScan(guesser.getScans()[scan_idx + scan_ahead_step])
-    guesser.plotScan(gscan[0, :])
+#     # guesser.plotScan(guesser.getScans()[scan_idx + scan_ahead_step])
+#     guesser.plotScan(gscan[0, :])
