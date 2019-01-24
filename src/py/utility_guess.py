@@ -121,7 +121,7 @@ class LaserScans:
         return segments
 
     def plotScan(self, scan, y=None):
-        lstep = (3/2)*np.pi/720
+        lstep = (3/2)*np.pi/scan.shape[0]
         theta = np.arange(self.scan_bound_percentage*(3/2)*np.pi,
                           (1 - self.scan_bound_percentage)*(3/2)*np.pi, lstep) - self.scan_bound_percentage*(3/2)*np.pi
         theta = theta[::-1]

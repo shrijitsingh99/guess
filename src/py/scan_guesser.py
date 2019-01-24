@@ -199,13 +199,18 @@ class ScanGuesser:
         return self.vae.predictDecoder(scan_latent)
 
     def generateScan(self, scans, cmd_vel):
+        if self.verbose: timer = ElapsedTimer()
         if scans.shape[0] < self.scan_batch_sz: return np.zeros((1,))
         z_latent = self.encodeScan(scans)
         if self.net_model == "lstm":
             x_latent, _ = self.__reshapeRGanInput(None, cmd_vel, z_latent)
         else:
             x_latent, _ = self.__reshapeGanInput(None, cmd_vel, z_latent)
-        return self.gan.generate(x_latent)
+
+
+        gen = self.gan.generate(x_latent)
+        if self.verbose: print("Prediction in", timer.elapsed_time())
+        return gen
 
     def generateRawScan(self, raw_scans, cmd_vel):
         if self.verbose: timer = ElapsedTimer()
@@ -213,15 +218,8 @@ class ScanGuesser:
         scans = raw_scans
         np.clip(scans, a_min=0, a_max=self.clip_scans_at, out=scans)
         scans = scans / self.clip_scans_at
-
-        z_latent = self.encodeScan(scans)
-        if self.net_model == "lstm":
-            x_latent, _ = self.__reshapeRGanInput(None, cmd_vel, z_latent)
-        else:
-            x_latent, _ = self.__reshapeGanInput(None, cmd_vel, z_latent)
-        gen = self.gan.generate(x_latent)
-        if self.verbose: print("Prediction in", timer.elapsed_time())
-        return gen
+        # self.plotScan(scans[0])
+        return self.generateScan(scans, cmd_vel)*self.clip_scans_at
 
     def getScans(self):
         return self.online_scans()

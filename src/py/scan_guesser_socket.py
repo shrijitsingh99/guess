@@ -85,10 +85,8 @@ if __name__ == "__main__":
         guesser.addRawScans(scan_batch, cmdv_batch)
         gscan = guesser.generateRawScan(scan_batch, cmdv_batch)[0]
         try:
+            # guesser.plotScan(gscan)
             provider.send((gscan*100).astype(np.int16))
-        except:
-            pass
+        except: pass
         i = i + 0
-    # guesser.plotScan(scan_batch[0, :])
-    # guesser.plotScan(gscan[0, :])
-    # plt.show()
+        # plt.show()
