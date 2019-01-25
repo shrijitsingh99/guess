@@ -211,7 +211,7 @@ class VAE:
         vae_loss = K.mean(reconstruction_loss + kl_loss)
 
         self.vae.add_loss(vae_loss)
-        self.vae.compile(optimizer='adam')
+        self.vae.compile(optimizer=Adam(lr=0.0001))
         if self.verbose: self.vae.summary()
 
     def fitModel(self, x, x_test=None, epochs=10, verbose=None):
@@ -507,7 +507,7 @@ class RGAN:
 
     def discriminator_model(self):
         if self.DM: return self.DM
-        optimizer = RMSprop(lr=0.0002, decay=6e-8)
+        optimizer = RMSprop(lr=0.00002, decay=6e-8)
         self.DM = Sequential()
         self.DM.add(self.discriminator())
         self.DM.compile(loss='binary_crossentropy',
@@ -516,7 +516,7 @@ class RGAN:
 
     def adversarial_model(self):
         if self.AM: return self.AM
-        optimizer = RMSprop(lr=0.0001, decay=3e-8)
+        optimizer = RMSprop(lr=0.00001, decay=3e-8)
         self.AM = Sequential()
         self.AM.add(self.generator())
         self.AM.add(self.discriminator())

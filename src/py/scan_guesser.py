@@ -40,7 +40,7 @@ class ScanGuesser:
         self.thr = Thread(target=self.__updateThr)
 
     def __updateThr(self):
-        print("Starting update thread...")
+        print("-- Starting update thread...")
         while True:
             scans = None
             cmd_vel = None
@@ -91,22 +91,26 @@ class ScanGuesser:
         else:
             x_latent, next_scan = self.__reshapeGanInput(scans, cmd_vel, z_latent)
         self.gan.fitModel(x_latent, next_scan,
-                          train_steps=self.gan_train_steps, batch_sz=self.gan_batch_sz, verbose=verbose)
+                          train_steps=self.gan_train_steps,
+                          batch_sz=self.gan_batch_sz, verbose=verbose)
 
     def __reshapeRGanInput(self, scans, cmd_vel, vae_z_latent):
         x_latent = np.concatenate((vae_z_latent, cmd_vel), axis=1)
-        reshaped = np.reshape(x_latent[:self.scan_batch_sz, :], (1, self.scan_batch_sz, self.gan_latent_dim))
+        reshaped = np.reshape(x_latent[:self.scan_batch_sz, :],
+                              (1, self.scan_batch_sz, self.gan_latent_dim))
         next_scan = None
         if not scans is None and scans.shape[0] > self.scan_batch_sz + self.gen_scan_ahead_step:
-            next_scan = np.reshape(scans[self.scan_batch_sz + self.gen_scan_ahead_step, :], (1, scans.shape[1]))
+            next_scan = np.reshape(scans[self.scan_batch_sz + self.gen_scan_ahead_step - 1, :], (1, scans.shape[1]))
 
         reshape_step = self.scan_batch_sz
-        for i in range(1, vae_z_latent.shape[0] - self.scan_batch_sz - self.gen_scan_ahead_step, reshape_step):
+        next_scan_step = self.gen_scan_ahead_step
+        if next_scan is None: next_scan_step = 0
+        for i in range(self.scan_batch_sz, vae_z_latent.shape[0] - next_scan_step, reshape_step):
             res = x_latent[i:i + self.scan_batch_sz, :]
             res = np.reshape(res, (1, self.scan_batch_sz, self.gan_latent_dim))
             reshaped = np.concatenate((reshaped, res))
             if not next_scan is None:
-                nscan = np.reshape(scans[i + self.scan_batch_sz + self.gen_scan_ahead_step, :], (1, scans.shape[1]))
+                nscan = np.reshape(scans[i + self.scan_batch_sz + next_scan_step - 1, :], (1, scans.shape[1]))
                 next_scan = np.concatenate((next_scan, nscan))
         return reshaped, next_scan
 
@@ -130,12 +134,14 @@ class ScanGuesser:
 
     def setInitDataset(self, raw_scans_file, init_models=False, init_scan_batch_num=None):
         if raw_scans_file is None:
+            if init_scan_batch_num is None: init_scan_batch_num = 1
+            init_scan_num = self.gan_batch_sz*self.scan_batch_sz*init_scan_batch_num + self.gen_scan_ahead_step
             print("Init random scans... ", end='')
-            self.ls.initRand(self.scan_batch_sz*self.gan_batch_sz*init_scan_batch_num,
-                             self.original_scan_dim)
+            self.ls.initRand(init_scan_num, self.original_scan_dim)
         else:
             print("Loading init scans... ", end='')
-            self.ls.load(raw_scans_file, clip_scans_at=self.clip_scans_at, scan_center_range=self.original_scan_dim)
+            self.ls.load(raw_scans_file,
+                         clip_scans_at=self.clip_scans_at, scan_center_range=self.original_scan_dim)
         print("done.")
 
         if init_models:
@@ -143,15 +149,15 @@ class ScanGuesser:
                 scans = self.ls.getScans()
                 cmd_vel = self.ls.cmdVel()
             else:
-                scans = self.ls.getScans()[:self.gan_batch_sz*self.scan_batch_sz*init_scan_batch_num + self.gen_scan_ahead_step - 1]  # reshape_step = 1
-                cmd_vel = self.ls.cmdVel()[:self.gan_batch_sz*self.scan_batch_sz*init_scan_batch_num + self.gen_scan_ahead_step - 1]  # reshape_step = 1
+                scans = self.ls.getScans()[:init_scan_num]
+                cmd_vel = self.ls.cmdVel()[:init_scan_num]
 
             timer = ElapsedTimer()
             print("Initializing VAE... ", end='')
             self.__updateVae(scans)
             print("done.")
-            print("Initializing GAN... ")
-            self.__updateGan(scans, cmd_vel, verbose=True)
+            print("Initializing GAN... ", end='')
+            self.__updateGan(scans, cmd_vel, verbose=(not raw_scans_file is None))
             print("done.")
             print("Models updated in", timer.elapsed_time())
             self.thr.start()
@@ -165,10 +171,11 @@ class ScanGuesser:
             self.online_scans = np.concatenate((self.online_scans, scans))
             self.online_cmd_vel = np.concatenate((self.online_cmd_vel, cmd_vel))
 
-        if self.online_scans.shape[0] < self.gan_batch_sz*self.scan_batch_sz + self.gen_scan_ahead_step:
-            return
-        if self.online_scans.shape[0]%self.gan_batch_sz*self.scan_batch_sz == 0:
-            scan_idx = self.online_scans.shape[0] - self.gan_batch_sz*self.scan_batch_sz - self.gen_scan_ahead_step
+        min_scan_num = self.gan_batch_sz*self.scan_batch_sz + self.gen_scan_ahead_step
+        if self.online_scans.shape[0] < min_scan_num: return
+
+        if self.online_scans.shape[0]%(min_scan_num - self.gen_scan_ahead_step) == 0:
+            scan_idx = self.online_scans.shape[0] - min_scan_num
             self.update_mtx.acquire()
             if self.updating_model:
                 self.update_mtx.release()
@@ -207,10 +214,9 @@ class ScanGuesser:
         else:
             x_latent, _ = self.__reshapeGanInput(None, cmd_vel, z_latent)
 
-
         gen = self.gan.generate(x_latent)
         if self.verbose: print("Prediction in", timer.elapsed_time())
-        return gen
+        return gen, self.decodeScan(z_latent)
 
     def generateRawScan(self, raw_scans, cmd_vel):
         if self.verbose: timer = ElapsedTimer()
@@ -219,7 +225,8 @@ class ScanGuesser:
         np.clip(scans, a_min=0, a_max=self.clip_scans_at, out=scans)
         scans = scans / self.clip_scans_at
         # self.plotScan(scans[0])
-        return self.generateScan(scans, cmd_vel)*self.clip_scans_at
+        gscan, vscan = self.generateScan(scans, cmd_vel)
+        return gscan[0]*self.clip_scans_at, vscan[0]*self.clip_scans_at
 
     def getScans(self):
         return self.online_scans()

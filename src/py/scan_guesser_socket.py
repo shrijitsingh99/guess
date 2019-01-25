@@ -56,7 +56,7 @@ class Receiver:
 
 if __name__ == "__main__":
     print("ScanGuesser test-socket")
-    scan_ahead_step = 5
+    scan_ahead_step = 10
     scan_seq_batch = 8
     scan_length = 512
     clip_scans_at = 5
@@ -70,7 +70,7 @@ if __name__ == "__main__":
     guesser.setInitDataset(None, init_models=True, init_scan_batch_num=1)
 
     receiver = Receiver((6 + scan_length)*scan_seq_batch, dport=9559)
-    provider = Provider(scan_length, dport=9558)
+    provider = Provider(scan_length*2, dport=9558)
 
     print("-- Staring main loop...")
     i = 0
@@ -83,10 +83,11 @@ if __name__ == "__main__":
         cmdv_batch = cmdv_batch.reshape(scan_seq_batch, 6)
 
         guesser.addRawScans(scan_batch, cmdv_batch)
-        gscan = guesser.generateRawScan(scan_batch, cmdv_batch)[0]
+        gscan, vscan = guesser.generateRawScan(scan_batch, cmdv_batch)
         try:
             # guesser.plotScan(gscan)
-            provider.send((gscan*100).astype(np.int16))
+            to_send = np.concatenate((gscan, vscan))
+            provider.send((to_send*100).astype(np.int16))
         except: pass
         i = i + 0
         # plt.show()

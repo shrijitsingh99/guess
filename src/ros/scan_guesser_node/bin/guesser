@@ -18,9 +18,12 @@ class ScanGuesserNode:
         cmd_vel_topic = rospy.get_param('~cmd_vel_topic', '/cmd_vel_mux/input/teleop')
         scan_topic = rospy.get_param('~scan_topic', '/scan')
         sg_scan_topic = rospy.get_param('~sg_scan_topic', '/sg_scan')
+        sv_scan_topic = rospy.get_param('~sv_scan_topic', '/sv_scan')
         self.sg_scan_pub = rospy.Publisher(sg_scan_topic, LaserScan, queue_size=10)
+        self.sv_scan_pub = rospy.Publisher(sv_scan_topic, LaserScan, queue_size=10)
         self.scan_sub = rospy.Subscriber(scan_topic, LaserScan, self.scanCb)
         self.cmd_vel_sub = rospy.Subscriber(cmd_vel_topic, Twist, self.cmdVelCb)
+        self.scan_idx = 0
 
         self.mtx = Lock()
         cmd_vel_sz = 6
@@ -28,7 +31,7 @@ class ScanGuesserNode:
         self.data_buffer = np.zeros((self.scan_batch_sz, cmd_vel_sz + self.scan_beam_num))
         self.scan_guesser_updating = False
         self.provider = Provider(self.scan_batch_sz*(cmd_vel_sz + self.scan_beam_num), dport=9559)
-        self.receiver = Receiver(self.scan_beam_num, dport=9558)
+        self.receiver = Receiver(self.scan_beam_num*2, dport=9558)
 
     def cmdVelCb(self, data):
         self.mtx.acquire()
@@ -48,7 +51,7 @@ class ScanGuesserNode:
             # data.header.stamp
             self.data_buffer[self.scan_idx, self.scan_beam_num:] = self.cmd_vel
             self.mtx.release()
-            irange = int(0.5*(len(data.ranges) - self.scan_beam_num) + 7)
+            irange = int(0.5*(len(data.ranges) - self.scan_beam_num))
             self.data_buffer[self.scan_idx,
                              :self.scan_beam_num] = data.ranges[irange:
                                                                 irange + self.scan_beam_num]
@@ -66,19 +69,24 @@ class ScanGuesserNode:
             to_send = np.concatenate((sreshaped, creshaped))
             try:
                 self.provider.send(to_send)
-                sg_scan = self.receiver.getData()
-                sg_scan = sg_scan*0.01
-                sg_scan_msg = LaserScan()
+                sg_data = self.receiver.getData().reshape((2, self.scan_beam_num))
+                sg_data = sg_data*0.01
+
                 sg_scan_msg = data
-                sg_scan_msg.ranges = list(sg_scan)
+                sg_scan_msg.ranges = list(sg_data[0])
                 self.sg_scan_pub.publish(sg_scan_msg)
+
+                sv_scan_msg = data
+                sv_scan_msg.ranges = list(sg_data[1])
+                self.sv_scan_pub.publish(sv_scan_msg)
             except:
                 # print "message not sent, waiting connection..."
                 pass
 
     def run(self):
-        while not rospy.is_shutdown():
-            rospy.sleep(10.0/self.rate)
+        rospy.spin()
+        # while not rospy.is_shutdown():
+        #     rospy.sleep(10.0/self.rate)
 
 if __name__ == '__main__':
     sgu.println('-- Starting Scan guesser ROS middle-ware')
