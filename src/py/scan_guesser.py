@@ -40,7 +40,6 @@ class ScanGuesser:
         self.thr = Thread(target=self.__updateThr)
 
     def __updateThr(self):
-        print("-- Starting update thread...")
         while True:
             scans = None
             cmd_vel = None
@@ -53,7 +52,7 @@ class ScanGuesser:
 
             if not scans is None and not cmd_vel is None:
                 timer = ElapsedTimer()
-                print("Models updated in", end='')
+                print("-- Model updated in", end='')
                 self.__updateVae(scans)
                 self.__updateGan(scans, cmd_vel, False) # False : verbose
                 print(" ", timer.elapsed_time())
@@ -61,7 +60,7 @@ class ScanGuesser:
             self.update_mtx.acquire()
             self.updating_model = False
             self.update_mtx.release()
-        print("Terminating update thread.")
+        print("-- Terminating update thread.")
 
     def __initModels(self):
         self.vae.buildModel(self.original_scan_dim)
@@ -133,13 +132,14 @@ class ScanGuesser:
         return reshaped, next_scan
 
     def setInitDataset(self, raw_scans_file, init_models=False, init_scan_batch_num=None):
+        print("- Initialize:")
         if raw_scans_file is None:
             if init_scan_batch_num is None: init_scan_batch_num = 1
             init_scan_num = self.gan_batch_sz*self.scan_batch_sz*init_scan_batch_num + self.gen_scan_ahead_step
-            print("Init random scans... ", end='')
+            print("-- Init random scans... ", end='')
             self.ls.initRand(init_scan_num, self.original_scan_dim)
         else:
-            print("Loading init scans... ", end='')
+            print("-- Init scans from dataset... ", end='')
             self.ls.load(raw_scans_file,
                          clip_scans_at=self.clip_scans_at, scan_center_range=self.original_scan_dim)
         print("done.")
@@ -153,14 +153,13 @@ class ScanGuesser:
                 cmd_vel = self.ls.cmdVel()[:init_scan_num]
 
             timer = ElapsedTimer()
-            print("Initializing VAE... ", end='')
+            print("-- Init VAE and GAN... ", end='')
             self.__updateVae(scans)
-            print("done.")
-            print("Initializing GAN... ", end='')
             self.__updateGan(scans, cmd_vel, verbose=(not raw_scans_file is None))
-            print("done.")
-            print("Models updated in", timer.elapsed_time())
+            print("done (" + timer.elapsed_time() + ").")
+            print("-- Init update thread... ", end='')
             self.thr.start()
+            print("done.\n")
 
     def addScans(self, scans, cmd_vel):
         if scans.shape[0] < self.scan_batch_sz: return

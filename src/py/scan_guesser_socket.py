@@ -2,6 +2,8 @@
 # coding: utf-8
 
 import socket
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -55,7 +57,9 @@ class Receiver:
             return np.array(dsrz_data, dtype=np.float32)
 
 if __name__ == "__main__":
-    print("ScanGuesser test-socket")
+    print("| ----------------------------- |")
+    print("| -- ScanGuesser test-socket -- |")
+    print("| ----------------------------- |\n")
     scan_ahead_step = 10
     scan_seq_batch = 8
     scan_length = 512
