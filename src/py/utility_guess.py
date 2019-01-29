@@ -153,12 +153,21 @@ class LaserScans:
                 col = '#1f77b4'
                 plt.plot(theta[s[0]:s[1]], scan[s[0]:s[1]], 'o', markersize=0.5, color=col)
 
-class VAE:
-    def __init__(self, batch_size=128, latent_dim=10, intermediate_dim=128, verbose=False):
+class AutoEncoder:
+    def __init__(self, original_dim,
+                 variational=True, convolutional=True,
+                 batch_size=128, latent_dim=10, intermediate_dim=128, verbose=False):
+        self.original_dim = original_dim
+        self.variational = variational
+        self.convolutional = convolutional
         self.batch_size = batch_size
         self.latent_dim = latent_dim
         self.intermediate_dim = intermediate_dim
         self.verbose = verbose
+        self.reshape_rows = 32
+        self.encoder = None
+        self.decoder = None
+        self.ae = None
 
     def sampling(self, args):
         z_mean, z_log_var = args
@@ -168,70 +177,96 @@ class VAE:
         epsilon = K.random_normal(shape=(batch, dim))
         return z_mean + K.exp(0.5 * z_log_var) * epsilon
 
-    def buildModel(self, original_dim):
-        input_shape = (original_dim, )
+    def buildModel(self):
+        if not self.ae is None: return self.ae
+        input_shape = (self.original_dim,)
+        depth = 32
+        dropout = 0.4
 
-        # VAE model = encoder + decoder
-        # build encoder model
-        inputs = Input(shape=input_shape, name='encoder_input')
-        x = Dense(self.intermediate_dim, activation='relu')(inputs)
-        z_mean = Dense(self.latent_dim, name='z_mean')(x)
-        z_log_var = Dense(self.latent_dim, name='z_log_var')(x)
+        ## ENCODER
+        e_in = Input(shape=input_shape, name='encoder_input')
+        if self.convolutional:
+            enc = Reshape((self.reshape_rows, int(self.original_dim/self.reshape_rows), 1,))(e_in)
+            enc = Conv2D(depth, 5, activation='relu', strides=2, padding='same')(enc)
+            enc = Conv2D(depth*4, 5, strides=2, padding='same')(enc)
+            enc = LeakyReLU(alpha=0.2)(enc)
+            enc = Dropout(dropout)(enc)
+            # shape info needed to build decoder model
+            self.enc_shape = K.int_shape(enc)
+            # Out: 1-dim probability
+            enc = Flatten()(enc)
+        else: enc = e_in
+        enc = Dense(self.intermediate_dim, activation='relu')(enc)
 
-        # use reparameterization trick to push the sampling out as input
-        # note that "output_shape" isn't necessary with the TensorFlow backend
-        z = Lambda(self.sampling, output_shape=(self.latent_dim,), name='z')([z_mean, z_log_var])
+        if self.variational:
+            self.z_mean = Dense(self.latent_dim, name='z_mean')(enc)
+            self.z_log_var = Dense(self.latent_dim, name='z_log_var')(enc)
+            z = Lambda(self.sampling, output_shape=(self.latent_dim,), name='z')([self.z_mean, self.z_log_var])
+            self.encoder = Model(e_in, [self.z_mean, self.z_log_var, z], name='encoder')
+        else:
+            e_out = Dense(self.latent_dim, activation='sigmoid')(enc)
+            self.encoder = Model(e_in, e_out, name='encoder')
+        if self.verbose: self.encoder.summary()
 
-        # instantiate encoder model
-        self.encoder = Model(inputs, [z_mean, z_log_var, z], name='encoder')
-        if self.verbose: encoder.summary()
+        ## DECODER
+        d_in = Input(shape=(self.latent_dim,), name='z_sampling')
+        if self.convolutional:
+            dec = Dense(self.enc_shape[1]*self.enc_shape[2]*self.enc_shape[3], activation='relu')(d_in)
+            dec = Reshape((self.enc_shape[1], self.enc_shape[2], self.enc_shape[3]))(dec)
 
-        # build decoder model
-        latent_inputs = Input(shape=(self.latent_dim,), name='z_sampling')
-        x = Dense(self.intermediate_dim, activation='relu')(latent_inputs)
-        outputs = Dense(original_dim, activation='sigmoid')(x)
+            dec = Conv2DTranspose(filters=int(depth/2), kernel_size=5,
+                              activation='relu', strides=2, padding='same')(dec)
+            dec = Conv2DTranspose(filters=int(depth/4), kernel_size=5,
+                              activation='relu', strides=2, padding='same')(dec)
+            dec = Dropout(dropout)(dec)
+            dec = Dense(int(depth/16), activation='relu')(dec)
+            dec = Flatten()(dec)
+        else:
+            dec = Dense(self.intermediate_dim, activation='relu')(d_in)
+        d_out = Dense(self.original_dim, activation='sigmoid')(dec)
+        self.decoder = Model(d_in, d_out, name='decoder')
+        if self.verbose: self.decoder.summary()
 
-        # instantiate decoder model
-        self.decoder = Model(latent_inputs, outputs, name='decoder')
-        if self.verbose: decoder.summary()
+        ## AUTOENCODER
+        if self.variational:
+            vae_out = self.decoder(self.encoder(e_in)[2])
+            self.ae = Model(e_in, vae_out, name='vae_mlp')
 
-        # instantiate VAE model
-        outputs = self.decoder(self.encoder(inputs)[2])
-        self.vae = Model(inputs, outputs, name='vae_mlp')
+            reconstruction_loss = binary_crossentropy(e_in, vae_out)
+            reconstruction_loss *= self.original_dim
 
-        reconstruction_loss = binary_crossentropy(inputs, outputs)
-        reconstruction_loss *= original_dim
+            kl_loss = 1 + self.z_log_var - K.square(self.z_mean) - K.exp(self.z_log_var)
+            kl_loss = -0.5*K.sum(kl_loss, axis=-1)
+            vae_loss = K.mean(reconstruction_loss + kl_loss)
 
-        kl_loss = 1 + z_log_var - K.square(z_mean) - K.exp(z_log_var)
-        kl_loss = K.sum(kl_loss, axis=-1)
-        kl_loss *= -0.5
-        vae_loss = K.mean(reconstruction_loss + kl_loss)
-
-        self.vae.add_loss(vae_loss)
-        self.vae.compile(optimizer=Adam(lr=0.0001))
-        if self.verbose: self.vae.summary()
+            self.ae.add_loss(vae_loss)
+            self.ae.compile(optimizer=Adam(lr=0.0001))
+        else:
+            vae_out = self.decoder(self.encoder(e_in))
+            self.ae = Model(e_in, vae_out, name='autoencoder')
+            self.ae.compile(optimizer='adadelta', loss='binary_crossentropy')
+        if self.verbose: self.ae.summary()
+        return self.ae
 
     def fitModel(self, x, x_test=None, epochs=10, verbose=None):
-        if x_test is None:
-            self.vae.fit(x,
-                         epochs=epochs,
-                         batch_size=self.batch_size,
-                         verbose=verbose)
+        if not x_test is None: x_test = (x_test, None)
+        if self.variational:
+            self.ae.fit(x, epochs=epochs, batch_size=self.batch_size, verbose=verbose)
         else:
-            self.vae.fit(x,
-                         epochs=epochs,
-                         batch_size=self.batch_size,
-                         verbose=verbose,
-                         validation_data=(x_test, None))
+            for e in range(epochs):
+                for i in range(0, x.shape[0] - self.batch_size, self.batch_size):
+                    self.ae.train_on_batch(x[i:i + self.batch_size], x[i:i + self.batch_size])
 
-    def predictEncoder(self, x, batch_size=None):
+    def encode(self, x, batch_size=None):
         if len(x.shape) == 1: x = np.array([x])
-        z_mean, _, _ = self.encoder.predict(x, batch_size=batch_size)
-        return z_mean
+        if self.variational:
+            z_mean, _, _ = self.encoder.predict(x, batch_size=batch_size)
+            return z_mean
+        else:
+            return self.encoder.predict(x, batch_size=batch_size)
 
-    def predictDecoder(self, z_mean):
-        x_decoded = self.decoder.predict(z_mean)
-        return x_decoded
+    def decode(self, z_mean):
+        return self.decoder.predict(z_mean)
 
 class GAN:
     def __init__(self, verbose=False):
@@ -580,39 +615,32 @@ if __name__ == "__main__":
     ls.load("../../dataset/diag_underground.txt",
              clip_scans_at=8, scan_center_range=512)
 
-    vae = VAE()
-    vae.buildModel(ls.originalScansDim())
-    vae.fitModel(ls.getScans(), epochs=40, verbose=0)
+    ae = AutoEncoder(ls.originalScansDim(),
+                     variational=True, convolutional=True,
+                     batch_size=128, latent_dim=10, verbose=False)
+    ae.buildModel()
+
     x, x_test = ls.getScans(0.9)
-    vae.fitModel(x, x_test=x_test)
+    ae.fitModel(x[:1000], x_test=None, epochs=10, verbose=0)
+    print('Fitting model done.')
 
     batch_sz = 8
     gan_batch_sz = 8
-    scan_idx = 100
+    scan_idx = 1000
+    to_show_idx = 10
 
     scan = x[scan_idx:(scan_idx + batch_sz*gan_batch_sz)]
-    z_latent = vae.predictEncoder(scan)
-    dscan = vae.predictDecoder(z_latent)
-    ls.plotScan(scan[0], dscan[0])
+    latent = ae.encode(scan)
+    # plt.plot(latent[to_show_idx])
+    dscan = ae.decode(latent)
+    ls.plotScan(scan[to_show_idx], dscan[to_show_idx])
 
-    input_shape = (ls.originalScansDim(), 1, 1,)
-    latent_dim = gan_batch_sz*(10 + 6) # latent input dim + cmdVel from vae
+    ae.fitModel(x[900:6000], x_test=None, epochs=40, verbose=0)
 
-    gan = GAN(verbose=False)
-    gan.buildModel(input_shape, latent_dim)
-
-    cmd_vels = ls.cmdVel()[scan_idx:(scan_idx + batch_sz*gan_batch_sz)]
-    x_latent = np.concatenate((z_latent, cmd_vels), axis=1)
-    x_latent = np.reshape(x_latent, (batch_sz, latent_dim))
-
-    next_scan = np.zeros((batch_sz, ls.originalScansDim()))
-    for ns in range(batch_sz):
-        next_scan[ns, :ls.originalScansDim()] = x[(scan_idx + gan_batch_sz + ns*gan_batch_sz + 1)]
-
-    gan.fitModel(x_latent, next_scan, train_steps=5, batch_sz=batch_sz)
-
-    gscan = gan.generate(x_latent)
-    # ls.plotScan(next_scan[0, :])
-    # ls.plotScan(gscan[0, :])
+    scan = x[scan_idx:(scan_idx + batch_sz*gan_batch_sz)]
+    latent = ae.encode(scan)
+    # plt.plot(latent[to_show_idx])
+    dscan = ae.decode(latent)
+    ls.plotScan(scan[to_show_idx], dscan[to_show_idx])
 
     plt.show()
