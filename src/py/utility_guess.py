@@ -2,6 +2,7 @@
 # coding: utf-8
 
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import time
 import argparse
 import numpy as np
@@ -12,12 +13,10 @@ from keras.layers import Conv2D, Conv2DTranspose, UpSampling2D, LSTM, TimeDistri
 from keras.layers import LeakyReLU, Dropout
 from keras.layers import BatchNormalization
 from keras.layers import Lambda, Input, Dense
-
 from keras.models import Model, Sequential
 from keras.losses import mse, binary_crossentropy
 from keras.optimizers import Adam, RMSprop
 from keras.utils import plot_model
-
 from keras import backend as K
 
 class ElapsedTimer:
@@ -613,7 +612,7 @@ if __name__ == "__main__":
     gan.fitModel(x_latent, next_scan, train_steps=5, batch_sz=batch_sz)
 
     gscan = gan.generate(x_latent)
-    ls.plotScan(next_scan[0, :])
-    ls.plotScan(gscan[0, :])
+    # ls.plotScan(next_scan[0, :])
+    # ls.plotScan(gscan[0, :])
 
     plt.show()

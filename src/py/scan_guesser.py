@@ -5,7 +5,6 @@ import numpy as np
 from threading import Thread, Lock
 from utility_guess import LaserScans, VAE, GAN, RGAN, ElapsedTimer
 
-
 class ScanGuesser:
     def __init__(self,
                  original_scan_dim, net_model="default", scan_batch_sz=8, clip_scans_at=8, gen_scan_ahead_step=1,
