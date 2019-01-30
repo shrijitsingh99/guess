@@ -67,9 +67,11 @@ if __name__ == "__main__":
     guesser = ScanGuesser(scan_length, # original_scan_dim
                           net_model="lstm",  # default; thin; lstm
                           scan_batch_sz=scan_seq_batch,  # sequence of scans to concatenate to create one input
+                          ae_epochs=30,
+                          ae_variational=True, ae_convolutional=False,
                           clip_scans_at=clip_scans_at,  # max beam length [m]
-                          gen_scan_ahead_step=scan_ahead_step,  # numbr of 'scansteps' to look ahaed for generation
-                          gan_batch_sz=32, gan_train_steps=10)
+                          gen_scan_ahead_step=scan_ahead_step,  # number of 'scansteps' to look ahaed for generation
+                          gan_batch_sz=32, gan_train_steps=40, start_update_thr=True)
 
     guesser.setInitDataset(None, init_models=True, init_scan_batch_num=1)
 

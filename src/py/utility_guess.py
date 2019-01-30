@@ -616,31 +616,49 @@ if __name__ == "__main__":
              clip_scans_at=8, scan_center_range=512)
 
     ae = AutoEncoder(ls.originalScansDim(),
-                     variational=True, convolutional=True,
+                     variational=True, convolutional=False,
                      batch_size=128, latent_dim=10, verbose=False)
     ae.buildModel()
 
-    x, x_test = ls.getScans(0.9)
-    ae.fitModel(x[:1000], x_test=None, epochs=10, verbose=0)
-    print('Fitting model done.')
-
     batch_sz = 8
-    gan_batch_sz = 8
+    gan_batch_sz = 32
     scan_idx = 1000
     to_show_idx = 10
 
+    x, x_test = ls.getScans(0.9)
+
+    ae.fitModel(x[:1000], x_test=None, epochs=30, verbose=0)
+    print('Fitting model done.')
+
+    scan = x[scan_idx:(scan_idx + batch_sz*gan_batch_sz)]
+    latent = ae.encode(scan)
+    # plt.plot(latent[to_show_idx])
+    dscan = ae.decode(latent)
+    # ls.plotScan(scan[to_show_idx], dscan[to_show_idx])
+
+    ae.fitModel(x[900:5000], x_test=None, epochs=30, verbose=0)
+
     scan = x[scan_idx:(scan_idx + batch_sz*gan_batch_sz)]
     latent = ae.encode(scan)
     # plt.plot(latent[to_show_idx])
     dscan = ae.decode(latent)
     ls.plotScan(scan[to_show_idx], dscan[to_show_idx])
 
-    ae.fitModel(x[900:6000], x_test=None, epochs=40, verbose=0)
+    scan_ahead_step = 5
+    scan_ahead = x[batch_sz + scan_ahead_step]
 
-    scan = x[scan_idx:(scan_idx + batch_sz*gan_batch_sz)]
-    latent = ae.encode(scan)
-    # plt.plot(latent[to_show_idx])
-    dscan = ae.decode(latent)
-    ls.plotScan(scan[to_show_idx], dscan[to_show_idx])
+    gan = RGAN()
+    gan.buildModel((ls.originalScansDim(), 1, 1,), 16, batch_sz)
 
+    conc = 8192
+    latent = ae.encode(x[:conc])
+    in_latent = np.concatenate((latent, ls.cmdVel()[:conc]), axis=1)
+    in_latent = np.reshape(in_latent,
+                           (int(in_latent.shape[0]/batch_sz), batch_sz, in_latent.shape[1]))
+    in_label = x[(batch_sz + scan_ahead_step):(conc + scan_ahead_step + 1):batch_sz, :]
+    gan.fitModel(in_latent, in_label, train_steps=15, batch_sz=gan_batch_sz, verbose=True)
+
+    gscan = gan.generate(np.concatenate((latent, ls.cmdVel()[:conc]), axis=1)[:batch_sz])
+    ls.plotScan(scan_ahead)
+    ls.plotScan(gscan[0])
     plt.show()
