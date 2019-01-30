@@ -90,8 +90,8 @@ class ScanGuesser:
         if not scans is None and scans.shape[0] > self.scan_batch_sz + self.gen_scan_ahead_step:
             next_scan = scans[self.scan_batch_sz + self.gen_scan_ahead_step::self.scan_batch_sz]
         if not next_scan is None and x_latent.shape[0] != next_scan.shape[0]:
-            next_scan = np.concatenate((next_scan, np.tile(scans[-1:],
-                                                           (1, x_latent.shape[0] - next_scan.shape[0]))))
+            tail = np.tile(scans[-1:], (x_latent.shape[0] - next_scan.shape[0], 1))
+            next_scan = np.concatenate((next_scan, tail))
         return x_latent, next_scan
 
     def __updateAE(self, scans=None):
@@ -166,6 +166,7 @@ class ScanGuesser:
                 self.thr_cmd_vel = self.online_cmd_vel[-min_scan_num:]
                 self.update_mtx.release()
             return True
+        else: return False
 
         if not self.start_update_thr:
             self.__updateAE(self.online_scans[-min_scan_num:])

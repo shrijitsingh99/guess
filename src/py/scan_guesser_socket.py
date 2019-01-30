@@ -90,6 +90,7 @@ if __name__ == "__main__":
 
         guesser.addRawScans(scan_batch, cmdv_batch)
         gscan, vscan = guesser.generateRawScan(scan_batch, cmdv_batch)
+        print("jesus")
         try:
             # guesser.plotScan(gscan)
             to_send = np.concatenate((gscan, vscan))
