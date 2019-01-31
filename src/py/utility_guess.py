@@ -24,11 +24,11 @@ class ElapsedTimer:
         self.start_time = time.time()
     def __elapsed(self,sec):
         if sec < 60:
-            return str(sec) + " sec"
+            return str(round(sec, 1)) + " sec"
         elif sec < (60 * 60):
-            return str(sec / 60) + " min"
+            return str(int(sec / 60)) + " min"
         else:
-            return str(sec / (60 * 60)) + " hr"
+            return str(int(sec / (60 * 60))) + " hr"
     def elapsed_time(self):
         return self.__elapsed(time.time() - self.start_time)
 
@@ -240,22 +240,28 @@ class AutoEncoder:
             vae_loss = K.mean(reconstruction_loss + kl_loss)
 
             self.ae.add_loss(vae_loss)
-            self.ae.compile(optimizer=Adam(lr=0.0001))
+            self.ae.compile(optimizer=Adam(lr=0.0001), metrics=['accuracy'])
         else:
             vae_out = self.decoder(self.encoder(e_in))
             self.ae = Model(e_in, vae_out, name='autoencoder')
-            self.ae.compile(optimizer='adadelta', loss='binary_crossentropy')
+            self.ae.compile(optimizer='adadelta', loss='binary_crossentropy', metrics=['accuracy'])
         if self.verbose: self.ae.summary()
         return self.ae
 
     def fitModel(self, x, x_test=None, epochs=10, verbose=None):
         if not x_test is None: x_test = (x_test, None)
+        ret = []
         if self.variational:
-            self.ae.fit(x, epochs=epochs, batch_size=self.batch_size, verbose=verbose)
+            met = self.ae.fit(x, epochs=epochs, batch_size=self.batch_size,
+                              shuffle=True, validation_data=x_test, verbose=verbose)
+            ret = [[l, -1] for l in met.history['loss']]
         else:
             for e in range(epochs):
                 for i in range(0, x.shape[0] - self.batch_size, self.batch_size):
-                    self.ae.train_on_batch(x[i:i + self.batch_size], x[i:i + self.batch_size])
+                    met = self.ae.train_on_batch(x[i:i + self.batch_size], x[i:i + self.batch_size])
+                    ret.append(met)
+        ret_avgs = np.mean(ret, axis=0)
+        return np.array(ret_avgs)
 
     def encode(self, x, batch_size=None):
         if len(x.shape) == 1: x = np.array([x])
@@ -430,6 +436,7 @@ class GAN:
 
     def fitModel(self, x, x_label, train_steps=10, batch_sz=32, verbose=None):
         if verbose is None: verbose = self.verbose
+        ret = []
         for b in range(0, x.shape[0], batch_sz):
             if b + batch_sz > x.shape[0]: continue
             for t in range(train_steps):
@@ -451,10 +458,14 @@ class GAN:
                 y = np.ones([batch_sz, 1])
                 a_loss = self.ADV.train_on_batch(gen_in, y)
 
-                log_mesg = "%d/%d: [D loss: %f, acc: %f]" % \
-                           (b + batch_sz, x.shape[0], d_loss[0], d_loss[1])
-                log_mesg = "%s  [A loss: %f, acc: %f]" % (log_mesg, a_loss[0], a_loss[1])
-                if verbose and t == train_steps - 1: print(log_mesg)
+                if t == train_steps - 1:
+                    ret.append([d_loss[0], d_loss[1], a_loss[0], a_loss[1]])
+                    if verbose:
+                        log_mesg = "%d/%d: [D loss: %f, acc: %f]" % \
+                                   (b + batch_sz, x.shape[0], d_loss[0], d_loss[1])
+                        log_mesg = "%s  [A loss: %f, acc: %f]" % (log_mesg, a_loss[0], a_loss[1])
+                        print(log_mesg)
+        return np.array(ret).reshape(4,)
 
     def latentInputDim(self):
         return self.latent_input_dim
@@ -567,6 +578,7 @@ class RGAN:
 
     def fitModel(self, x, x_label, train_steps=10, batch_sz=32, verbose=None):
         if verbose is None: verbose = self.verbose
+        ret = []
         for b in range(0, x.shape[0], batch_sz):
             if b + batch_sz > x.shape[0]: continue
             for t in range(train_steps):
@@ -589,10 +601,14 @@ class RGAN:
                 y = np.ones([batch_sz, 1])
                 a_loss = self.ADV.train_on_batch(gen_in, y)
 
-                log_mesg = "%d/%d: [D loss: %f, acc: %f]" % \
-                           (b + batch_sz, x.shape[0], d_loss[0], d_loss[1])
-                log_mesg = "%s  [A loss: %f, acc: %f]" % (log_mesg, a_loss[0], a_loss[1])
-                if verbose and t == train_steps - 1: print(log_mesg)
+                if t == train_steps - 1:
+                    ret.append([d_loss[0], d_loss[1], a_loss[0], a_loss[1]])
+                    if verbose:
+                        log_mesg = "%d/%d: [D loss: %f, acc: %f]" % \
+                                   (b + batch_sz, x.shape[0], d_loss[0], d_loss[1])
+                        log_mesg = "%s  [A loss: %f, acc: %f]" % (log_mesg, a_loss[0], a_loss[1])
+                        print(log_mesg)
+        return np.array(ret).reshape(4,)
 
     def latentInputDim(self):
         return self.latent_input_dim

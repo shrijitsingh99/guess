@@ -48,8 +48,8 @@ class Receiver:
             block = c.recv(self.data_length*2)
             if not block: break
             data += block
-            c.close()
-            self.socket.close()
+        c.close()
+        self.socket.close()
 
-            dsrz_data = np.frombuffer(data, dtype=np.int16)
-            return np.array(dsrz_data, dtype=np.float32)
+        dsrz_data = np.frombuffer(data, dtype=np.int16)
+        return np.array(dsrz_data, dtype=np.float32)

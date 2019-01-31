@@ -23,45 +23,39 @@ class ScanGuesserNode:
         self.sv_scan_pub = rospy.Publisher(sv_scan_topic, LaserScan, queue_size=10)
         self.scan_sub = rospy.Subscriber(scan_topic, LaserScan, self.scanCb)
         self.cmd_vel_sub = rospy.Subscriber(cmd_vel_topic, Twist, self.cmdVelCb)
-        self.scan_idx = 0
 
         self.mtx = Lock()
         cmd_vel_sz = 6
         self.cmd_vel = np.zeros((cmd_vel_sz,), dtype=np.float32)
+        self.buffer_idx = 0
         self.data_buffer = np.zeros((self.scan_batch_sz, cmd_vel_sz + self.scan_beam_num))
-        self.scan_guesser_updating = False
         self.provider = Provider(self.scan_batch_sz*(cmd_vel_sz + self.scan_beam_num), dport=9559)
         self.receiver = Receiver(self.scan_beam_num*2, dport=9558)
 
     def cmdVelCb(self, data):
         self.mtx.acquire()
-        self.cmd_vel[0] = data.linear.x
-        self.cmd_vel[1] = data.linear.y
-        self.cmd_vel[2] = data.linear.z
-        self.cmd_vel[3] = data.angular.x
-        self.cmd_vel[4] = data.angular.y
-        self.cmd_vel[5] = data.angular.z
+        self.cmd_vel = np.array([data.linear.x, data.linear.y, data.linear.z,
+                                 data.angular.x, data.angular.y, data.angular.z])
         self.mtx.release()
 
     def scanCb(self, data):
-        if self.scan_idx == self.scan_batch_sz:
-            self.scan_idx = 0
+        if self.buffer_idx == self.scan_batch_sz:
+            self.buffer_idx = 0
         else:
             self.mtx.acquire()
-            # data.header.stamp
-            self.data_buffer[self.scan_idx, self.scan_beam_num:] = self.cmd_vel
+            self.data_buffer[self.buffer_idx, self.scan_beam_num:] = self.cmd_vel
             self.mtx.release()
+            print data.header.stamp
             irange = int(0.5*(len(data.ranges) - self.scan_beam_num))
-            self.data_buffer[self.scan_idx,
-                             :self.scan_beam_num] = data.ranges[irange:
-                                                                irange + self.scan_beam_num]
+            self.data_buffer[self.buffer_idx,
+                             :self.scan_beam_num] = data.ranges[irange:irange + self.scan_beam_num]
             cmdv_batch = np.zeros((self.scan_batch_sz, 6))
-            cmdv_batch[:(self.scan_batch_sz - self.scan_idx)] = self.data_buffer[self.scan_idx:, self.scan_beam_num:]
-            cmdv_batch[(self.scan_batch_sz - 1 - self.scan_idx):] = self.data_buffer[:self.scan_idx + 1, self.scan_beam_num:]
+            cmdv_batch[:(self.scan_batch_sz - self.buffer_idx)] = self.data_buffer[self.buffer_idx:, self.scan_beam_num:]
+            cmdv_batch[(self.scan_batch_sz - 1 - self.buffer_idx):] = self.data_buffer[:self.buffer_idx + 1, self.scan_beam_num:]
             scan_batch = np.zeros((self.scan_batch_sz, self.scan_beam_num))
-            scan_batch[:(self.scan_batch_sz - self.scan_idx)] = self.data_buffer[self.scan_idx:, :self.scan_beam_num]
-            scan_batch[(self.scan_batch_sz - 1 - self.scan_idx):] = self.data_buffer[:self.scan_idx + 1, :self.scan_beam_num]
-            self.scan_idx = self.scan_idx + 1
+            scan_batch[:(self.scan_batch_sz - self.buffer_idx)] = self.data_buffer[self.buffer_idx:, :self.scan_beam_num]
+            scan_batch[(self.scan_batch_sz - 1 - self.buffer_idx):] = self.data_buffer[:self.buffer_idx + 1, :self.scan_beam_num]
+            self.buffer_idx = self.buffer_idx + 1
             sreshaped = scan_batch.reshape(scan_batch.shape[0]*scan_batch.shape[1],)
             sreshaped = (sreshaped*100).astype(np.int16)
             creshaped = cmdv_batch.reshape(cmdv_batch.shape[0]*cmdv_batch.shape[1],)
@@ -69,19 +63,19 @@ class ScanGuesserNode:
             to_send = np.concatenate((sreshaped, creshaped))
             try:
                 self.provider.send(to_send)
-                sg_data = self.receiver.getData().reshape((2, self.scan_beam_num))
-                sg_data = sg_data*0.01
+            except Exception as e:
+                # print "Connection problem... " + str(e)
+                return
 
-                sg_scan_msg = data
-                sg_scan_msg.ranges = list(sg_data[0])
-                self.sg_scan_pub.publish(sg_scan_msg)
+            sg_data = self.receiver.getData().reshape((2, self.scan_beam_num))*0.01
 
-                sv_scan_msg = data
-                sv_scan_msg.ranges = list(sg_data[1])
-                self.sv_scan_pub.publish(sv_scan_msg)
-            except:
-                # print "message not sent, waiting connection..."
-                pass
+            sg_scan_msg = data
+            sg_scan_msg.ranges = list(sg_data[0])
+            self.sg_scan_pub.publish(sg_scan_msg)
+
+            sv_scan_msg = data
+            sv_scan_msg.ranges = list(sg_data[1])
+            self.sv_scan_pub.publish(sv_scan_msg)
 
     def run(self):
         rospy.spin()

@@ -46,22 +46,29 @@ class ScanGuesser:
             scans = None
             cmd_vel = None
             self.update_mtx.acquire()
-            if not self.updating_model:
-                scans = self.thr_scans
-                cmd_vel = self.thr_cmd_vel
-                self.updating_model = True
+            scans = self.thr_scans
+            cmd_vel = self.thr_cmd_vel
+            self.thr_scans = None
+            self.thr_cmd_vel = None
             self.update_mtx.release()
 
             if not scans is None and not cmd_vel is None:
+                self.update_mtx.acquire()
+                self.updating_model = True
+                self.update_mtx.release()
+
                 timer = ElapsedTimer()
                 print("-- Model updated in", end='')
-                self.__updateAE(scans)
-                self.__updateGan(scans, cmd_vel, False) # False : verbose
-                print(" ", timer.elapsed_time())
+                ae_metrics = self.__updateAE(scans)
+                gan_metrics = self.__updateGan(scans, cmd_vel, False) # False : verbose
+                print("\033[1;32m", timer.elapsed_time(), "\033[0m")
+                print("  -- AE loss:", ae_metrics[0], "- acc:", ae_metrics[1])
+                print("  -- GAN d-loss:", gan_metrics[0], "- d-acc:", gan_metrics[1], end='')
+                print(" - a-loss:", gan_metrics[2], "- a-acc:", gan_metrics[3], "\n")
 
-            self.update_mtx.acquire()
-            self.updating_model = False
-            self.update_mtx.release()
+                self.update_mtx.acquire()
+                self.updating_model = False
+                self.update_mtx.release()
         print("-- Terminating update thread.")
 
     def __initModels(self):
@@ -89,29 +96,34 @@ class ScanGuesser:
         next_scan = None
         if not scans is None and scans.shape[0] > self.scan_batch_sz + self.gen_scan_ahead_step:
             next_scan = scans[self.scan_batch_sz + self.gen_scan_ahead_step::self.scan_batch_sz]
-        if not next_scan is None and x_latent.shape[0] != next_scan.shape[0]:
-            tail = np.tile(scans[-1:], (x_latent.shape[0] - next_scan.shape[0], 1))
-            next_scan = np.concatenate((next_scan, tail))
+        if not next_scan is None:
+            if x_latent.shape[0] != next_scan.shape[0]:
+                tail = np.tile(scans[-1:], (x_latent.shape[0] - next_scan.shape[0], 1))
+                next_scan = np.concatenate((next_scan, tail))
+
+            next_cmdv = None
+            if cmd_vel.shape[0] > self.scan_batch_sz + self.gen_scan_ahead_step:
+                next_cmdv = [cmd_vel[ns:ns + self.gen_scan_ahead_step] \
+                             for ns in range(0, cmd_vel.shape[0] - self.scan_batch_sz,
+                                             self.scan_batch_sz)]
+                next_cmdv = np.array(next_cmdv)
+                # print("x_latent", x_latent.shape)
+                # print("next_scan", next_scan.shape)
+                # print("next_cmdv", next_cmdv.shape)
         return x_latent, next_scan
 
-    def __updateAE(self, scans=None):
-        v = 0
-        if self.verbose: v = 1
-        if scans is None: scans = self.ls.getScans()
-        self.ae.fitModel(scans, epochs=self.ae_epochs, verbose=v)
+    def __updateAE(self, scans, verbose=0):
+        if self.verbose: verbose = 1
+        return self.ae.fitModel(scans, epochs=self.ae_epochs, verbose=verbose)
 
-    def __updateGan(self, scans=None, cmd_vel=None, verbose=False):
-        if scans is None: scans = self.ls.getScans()
-        if cmd_vel is None: cmd_vel = self.ls.cmdVel()
-
+    def __updateGan(self, scans, cmd_vel, verbose=False):
         latent = self.encodeScan(scans)
         x_latent, next_scan = self.__reshapeGanInput(scans, cmd_vel, latent)
+        return self.gan.fitModel(x_latent, next_scan,
+                                 train_steps=self.gan_train_steps,
+                                 batch_sz=self.gan_batch_sz, verbose=verbose)
 
-        self.gan.fitModel(x_latent, next_scan,
-                          train_steps=self.gan_train_steps,
-                          batch_sz=self.gan_batch_sz, verbose=verbose)
-
-    def setInitDataset(self, raw_scans_file, init_models=False, init_scan_batch_num=None):
+    def init(self, raw_scans_file, init_models=False, init_scan_batch_num=None):
         print("- Initialize:")
         init_scan_num = self.gan_batch_sz*self.scan_batch_sz*init_scan_batch_num + self.gen_scan_ahead_step
         if raw_scans_file is None:
@@ -135,9 +147,12 @@ class ScanGuesser:
 
             timer = ElapsedTimer()
             print("-- Init AutoEncoder and GAN... ", end='')
-            self.__updateAE(scans)
-            self.__updateGan(scans, cmd_vel)
-            print("done (" + timer.elapsed_time() + ").")
+            ae_metrics = self.__updateAE(scans)
+            gan_metrics = self.__updateGan(scans, cmd_vel)
+            print("done (\033[1;32m" + timer.elapsed_time() + "\033[0m).")
+            print("  -- AE loss:", ae_metrics[0], "- acc:", ae_metrics[1])
+            print("  -- GAN d-loss:", gan_metrics[0], "- d-acc:", gan_metrics[1], end='')
+            print(" - a-loss:", gan_metrics[2], "- a-acc:", gan_metrics[3])
             if self.start_update_thr:
                 print("-- Init update thread... ", end='')
                 self.thr.start()
@@ -153,27 +168,29 @@ class ScanGuesser:
             self.online_cmd_vel = np.concatenate((self.online_cmd_vel, cmd_vel))
 
         min_scan_num = self.gan_batch_sz*self.scan_batch_sz + self.gen_scan_ahead_step
+        # print(self.online_scans.shape[0], min_scan_num)
         if self.online_scans.shape[0] < min_scan_num: return False
 
         if self.start_update_thr \
-           and self.online_scans.shape[0]%(min_scan_num - self.gen_scan_ahead_step) == 0:
+           and self.online_scans.shape[0]%((min_scan_num - self.gen_scan_ahead_step))/4 == 0:
             self.update_mtx.acquire()
             if self.updating_model:
                 self.update_mtx.release()
             else:
-                self.updating_model = False
                 self.thr_scans = self.online_scans[-min_scan_num:]
                 self.thr_cmd_vel = self.online_cmd_vel[-min_scan_num:]
                 self.update_mtx.release()
-            return True
-        else: return False
 
         if not self.start_update_thr:
-            self.__updateAE(self.online_scans[-min_scan_num:])
-            self.__updateGan(self.online_scans[-min_scan_num:], self.online_cmd_vel[-min_scan_num:], verbose=True)
-            self.updating_model = False
-            return True
-        else: return False
+            timer = ElapsedTimer()
+            print("-- Model updated in", end='')
+            ae_metrics = self.__updateAE(self.online_scans[-min_scan_num:])
+            gan_metrics = self.__updateGan(self.online_scans[-min_scan_num:], self.online_cmd_vel[-min_scan_num:], verbose=False)
+            print("\033[1;32m", timer.elapsed_time(), "\033[0m")
+            print("  -- AE loss:", ae_metrics[0], "- acc:", ae_metrics[1])
+            print("  -- GAN d-loss:", gan_metrics[0], "- d-acc:", gan_metrics[1], end='')
+            print(" - a-loss:", gan_metrics[2], "- a-acc:", gan_metrics[3], "\n")
+        return True
 
     def addRawScans(self, raw_scans, cmd_vel):
         if raw_scans.shape[0] < self.scan_batch_sz: return False
@@ -200,7 +217,6 @@ class ScanGuesser:
         return gen[0], self.decodeScan(latent)
 
     def generateRawScan(self, raw_scans, cmd_vel):
-        if self.verbose: timer = ElapsedTimer()
         if raw_scans.shape[0] < self.scan_batch_sz: return None
         scans = raw_scans
         np.clip(scans, a_min=0, a_max=self.clip_scans_at, out=scans)
@@ -247,8 +263,8 @@ if __name__ == "__main__":
     # DIAG_first_floor.txt
     # diag_labrococo.txt
     # diag_underground.txt
-    guesser.setInitDataset("../../dataset/diag_underground.txt",
-                           init_models=True, init_scan_batch_num=1)
+    guesser.init("../../dataset/diag_underground.txt",
+                 init_models=True, init_scan_batch_num=1)
 
     scan_idx = 8
     scans = guesser.getScans()[scan_idx:scan_idx + scan_seq_batch]

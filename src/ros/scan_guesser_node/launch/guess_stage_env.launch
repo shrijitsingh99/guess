@@ -25,5 +25,5 @@
 
   <include file="$(find turtlebot_teleop)/launch/logitech.launch" />
 
-  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find stage_ros)/rviz/robot_navigation.rviz"/>
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(arg rviz_cfg)"/>
 </launch>
