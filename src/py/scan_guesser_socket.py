@@ -76,26 +76,33 @@ if __name__ == "__main__":
 
     guesser.init(None, init_models=True, init_scan_batch_num=1)
 
-    receiver = Receiver((6 + scan_length)*scan_seq_batch, dport=9559)
+    # 7 = 6D velocity + timestamp in seconds
+    receiver = Receiver((7 + scan_length)*scan_seq_batch, dport=9559)
     provider = Provider(scan_length*2, dport=9558)
+
+    handshake_port = 9550
+    print("-- Requesting modules handshake on localhost:" + str(handshake_port))
+    sp = Provider(1, dport=handshake_port)
+    sp.send(np.array([1]))
 
     print("\n-- Staring main loop...\n")
     i = 0
     while i < 100:
         i = i + 0
-        try:
-            data_batch_srz = receiver.getData()*0.01
+        try: data_batch_srz = receiver.getData()*0.01
         except Exception as e:
             print("Error", str(e))
             continue
 
         scan_batch = data_batch_srz[:scan_seq_batch*scan_length]
-        cmdv_batch = data_batch_srz[scan_seq_batch*scan_length:]
         scan_batch = scan_batch.reshape(scan_seq_batch, scan_length)
-        cmdv_batch = cmdv_batch.reshape(scan_seq_batch, 6)
+        cmdv_batch = data_batch_srz[scan_seq_batch*scan_length:]
+        cmdv_batch = cmdv_batch.reshape(scan_seq_batch, 7)
+        ts_batch = cmdv_batch[:, -1]
+        cmdv_batch = cmdv_batch[:, :-1]
 
         if add_scan + 1 == scan_seq_batch:
-            guesser.addRawScans(scan_batch, cmdv_batch)
+            guesser.addRawScans(scan_batch, cmdv_batch, ts_batch)
             add_scan = 0
         else: add_scan = add_scan + 1
 

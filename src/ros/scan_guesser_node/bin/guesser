@@ -14,7 +14,6 @@ class ScanGuesserNode:
     def __init__(self):
         self.scan_batch_sz = int(rospy.get_param('~scan_batch_sz', '8'))
         self.scan_beam_num = int(rospy.get_param('~scan_beam_num', '512'))
-        self.rate = float(rospy.get_param('~n_rate', '1.0'))
         cmd_vel_topic = rospy.get_param('~cmd_vel_topic', '/cmd_vel_mux/input/teleop')
         scan_topic = rospy.get_param('~scan_topic', '/scan')
         sg_scan_topic = rospy.get_param('~sg_scan_topic', '/sg_scan')
@@ -25,12 +24,37 @@ class ScanGuesserNode:
         self.cmd_vel_sub = rospy.Subscriber(cmd_vel_topic, Twist, self.cmdVelCb)
 
         self.mtx = Lock()
-        cmd_vel_sz = 6
-        self.cmd_vel = np.zeros((cmd_vel_sz,), dtype=np.float32)
+        cmd_vel_sz = 7  # 6D velocity + timestamp in seconds
+        self.cmd_vel = np.zeros((cmd_vel_sz - 1,), dtype=np.float32)
         self.buffer_idx = 0
         self.data_buffer = np.zeros((self.scan_batch_sz, cmd_vel_sz + self.scan_beam_num))
         self.provider = Provider(self.scan_batch_sz*(cmd_vel_sz + self.scan_beam_num), dport=9559)
         self.receiver = Receiver(self.scan_beam_num*2, dport=9558)
+
+    def __reshapeData(self, data):
+        self.mtx.acquire()
+        self.data_buffer[self.buffer_idx, self.scan_beam_num:-1] = self.cmd_vel
+        self.data_buffer[self.buffer_idx, -1] = rospy.get_time()
+        self.mtx.release()
+        buff_section = self.scan_batch_sz - self.buffer_idx
+        irange = int(0.5*(len(data) - self.scan_beam_num))
+
+        self.data_buffer[self.buffer_idx,
+                         :self.scan_beam_num] = data[irange:irange + self.scan_beam_num]
+        cmdv_batch = np.zeros((self.scan_batch_sz, self.cmd_vel.shape[0] + 1))
+        cmdv_batch[:buff_section] = self.data_buffer[self.buffer_idx:, self.scan_beam_num:]
+        cmdv_batch[(buff_section - 1):] = self.data_buffer[:self.buffer_idx + 1, self.scan_beam_num:]
+        scan_batch = np.zeros((self.scan_batch_sz, self.scan_beam_num))
+        scan_batch[:buff_section] = self.data_buffer[self.buffer_idx:, :self.scan_beam_num]
+        scan_batch[(buff_section - 1):] = self.data_buffer[:self.buffer_idx + 1, :self.scan_beam_num]
+        self.buffer_idx = self.buffer_idx + 1
+
+        sreshaped = scan_batch.reshape(scan_batch.shape[0]*scan_batch.shape[1],)
+        sreshaped = (sreshaped*100).astype(np.int16)
+        creshaped = cmdv_batch.reshape(cmdv_batch.shape[0]*cmdv_batch.shape[1],)
+        creshaped = (creshaped*100).astype(np.int16)
+        reshaped = np.concatenate((sreshaped, creshaped))
+        return reshaped
 
     def cmdVelCb(self, data):
         self.mtx.acquire()
@@ -42,27 +66,8 @@ class ScanGuesserNode:
         if self.buffer_idx == self.scan_batch_sz:
             self.buffer_idx = 0
         else:
-            self.mtx.acquire()
-            self.data_buffer[self.buffer_idx, self.scan_beam_num:] = self.cmd_vel
-            self.mtx.release()
-            print data.header.stamp
-            irange = int(0.5*(len(data.ranges) - self.scan_beam_num))
-            self.data_buffer[self.buffer_idx,
-                             :self.scan_beam_num] = data.ranges[irange:irange + self.scan_beam_num]
-            cmdv_batch = np.zeros((self.scan_batch_sz, 6))
-            cmdv_batch[:(self.scan_batch_sz - self.buffer_idx)] = self.data_buffer[self.buffer_idx:, self.scan_beam_num:]
-            cmdv_batch[(self.scan_batch_sz - 1 - self.buffer_idx):] = self.data_buffer[:self.buffer_idx + 1, self.scan_beam_num:]
-            scan_batch = np.zeros((self.scan_batch_sz, self.scan_beam_num))
-            scan_batch[:(self.scan_batch_sz - self.buffer_idx)] = self.data_buffer[self.buffer_idx:, :self.scan_beam_num]
-            scan_batch[(self.scan_batch_sz - 1 - self.buffer_idx):] = self.data_buffer[:self.buffer_idx + 1, :self.scan_beam_num]
-            self.buffer_idx = self.buffer_idx + 1
-            sreshaped = scan_batch.reshape(scan_batch.shape[0]*scan_batch.shape[1],)
-            sreshaped = (sreshaped*100).astype(np.int16)
-            creshaped = cmdv_batch.reshape(cmdv_batch.shape[0]*cmdv_batch.shape[1],)
-            creshaped = (creshaped*100).astype(np.int16)
-            to_send = np.concatenate((sreshaped, creshaped))
-            try:
-                self.provider.send(to_send)
+            pkg = self.__reshapeData(data.ranges)
+            try: self.provider.send(pkg)
             except Exception as e:
                 # print "Connection problem... " + str(e)
                 return
@@ -78,9 +83,16 @@ class ScanGuesserNode:
             self.sv_scan_pub.publish(sv_scan_msg)
 
     def run(self):
-        rospy.spin()
-        # while not rospy.is_shutdown():
-        #     rospy.sleep(10.0/self.rate)
+        handshake_port = 9550
+        sgu.println("-- Waiting modules handshake on localhost:" + str(handshake_port))
+        sr = Receiver(1, dport=handshake_port)
+        ack = sr.getData().astype(np.int32)[0]
+
+        if ack == 1:
+            rospy.sleep(2.0)
+            sgu.println("-- Spinning ROS node")
+            rospy.spin()
+
 
 if __name__ == '__main__':
     sgu.println('-- Starting Scan guesser ROS middle-ware')

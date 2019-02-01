@@ -35,7 +35,7 @@ class ElapsedTimer:
 class LaserScans:
     def __init__(self, verbose=False):
         self.verbose = verbose
-        self.timesteps = None
+        self.ts = None
         self.cmd_vel = None
         self.scans = None
         self.scan_bound_percentage = 0
@@ -47,12 +47,12 @@ class LaserScans:
         self.scan_bound_percentage = scan_bound_percentage
         self.data = np.loadtxt(datafile).astype('float32')
 
-        self.timesteps = self.data[:, :1]
+        self.ts = self.data[:, :1]
         self.cmd_vel = self.data[:, 1:7]
         self.scans = self.data[:, 7:]
 
         if self.verbose:
-            print("timesteps --", self.timesteps.shape)
+            print("timesteps --", self.ts.shape)
             print("cmd_vel --", self.cmd_vel.shape)
             print("scans --", self.scans.shape, "range [", np.max(self.scans), "-", np.min(self.scans), "]")
 
@@ -74,17 +74,18 @@ class LaserScans:
         self.scans = self.scans / self.clip_scans_at    # normalization makes the vae work
 
     def initRand(self, rand_scans_num, scan_dim, clip_scans_at=1.0):
+        self.scan_center_range = scan_dim
         self.scans = np.random.uniform(0.0, clip_scans_at, size=[rand_scans_num, scan_dim])
         self.cmd_vel = np.zeros((rand_scans_num, 6))
-        self.timesteps = np.zeros((rand_scans_num, 1))
+        self.ts = np.zeros((rand_scans_num, 1))
 
     def originalScansDim(self):
         if self.scans is None: return -1
         return self.scans.shape[1]
 
     def timesteps(self):
-        if self.timesteps is None: return np.zeros((1, 1))
-        return self.timesteps
+        if self.ts is None: return np.zeros((1, 1))
+        return self.ts
 
     def cmdVel(self):
         if self.cmd_vel is None: return np.zeros((1, 1))
