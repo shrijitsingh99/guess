@@ -117,29 +117,8 @@ class ScanGuesser:
                            for ns in range(0, ts.shape[0] - self.scan_batch_sz,
                                            self.scan_batch_sz)]
                 next_ts = np.array(next_ts)
-            next_scan = self.__projectScans(next_scan, next_cmdv, next_ts)
+                next_scan = self.ls.projectScans(next_scan, next_cmdv, next_ts)
         return x_latent, next_scan
-
-    def __projectScans(self, scans, cmdv, ts):
-        pscans = scans
-        for i in range(scans.shape[0]):
-            sb, cb, tb = scans[i], cmdv[i], ts[i] - ts[i][0]
-            x, y, th = 0.0, 0.0, 0.0
-
-            for n in range(self.gen_scan_ahead_step):
-                th = th + tb[n]*cb[n, 5]
-                x = x + tb[n]*np.cos(th)*cb[n, 0]
-                y = y + tb[n]*np.sin(th)*cb[n, 0]
-            cth, sth = np.cos(th), np.sin(th)
-            hm = np.array(((cth, -sth, x), (sth, cth, y), (0, 0, 1)))
-            pts = np.concatenate((scans[i],
-                                  np.arange(scans.shape[1]),
-                                  np.ones((scans.shape[1],)) ))
-            pts = pts.reshape((3, scans.shape[1]))
-            for p in range(scans.shape[1]):
-                pts[:, p] = np.sum(np.multiply(hm, pts[:, p]), axis=0)
-            pscans[i] = pts[0, :]
-        return pscans
 
     def __updateAE(self, scans, verbose=0):
         if self.verbose: verbose = 1
@@ -219,7 +198,7 @@ class ScanGuesser:
             ae_metrics = self.__updateAE(self.online_scans[-min_scan_num:])
             gan_metrics = self.__updateGan(self.online_scans[-min_scan_num:],
                                            self.online_cmd_vel[-min_scan_num:],
-                                           self.online_tsl[-min_scan_num:], verbose=False)
+                                           self.online_ts[-min_scan_num:], verbose=False)
             print("\033[1;32m", timer.elapsed_time(), "\033[0m")
             print("  -- AE loss:", ae_metrics[0], "- acc:", ae_metrics[1])
             print("  -- GAN d-loss:", gan_metrics[0], "- d-acc:", gan_metrics[1], end='')
@@ -310,14 +289,14 @@ if __name__ == "__main__":
     # guesser.plotScan(scan_guessed,
     #                  guesser.decodeScan(guesser.encodeScan(scan_guessed))[0])
 
-    for i in range(40):
+    for i in range(5):
         if guesser.simStep():
             if i == -1:
                 gscan, _ = guesser.generateScan(scans, cmdvs)
                 guesser.plotScan(gscan)
 
     gscan, dscan = guesser.generateScan(scans, cmdvs)
-    guesser.plotScan(scan_guessed, dscan)
+    guesser.plotScan(scan_guessed, dscan[0])
     guesser.plotScan(gscan)
 
     import matplotlib.pyplot as plt

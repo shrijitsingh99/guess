@@ -79,6 +79,34 @@ class LaserScans:
         self.cmd_vel = np.zeros((rand_scans_num, 6))
         self.ts = np.zeros((rand_scans_num, 1))
 
+    def projectScan(self, scan, cmdv, ts):
+        sb, cb, tb = scan, cmdv, ts - ts[0]
+        tb = tb.reshape((cmdv.shape[0],))
+        x, y, th = 0.0, 0.0, 0.0
+        for n in range(cmdv.shape[0]):
+            th = th + tb[n]*2*cb[n, 5]
+            x = x + tb[n]*np.cos(th)*cb[n, 0]
+            y = y + tb[n]*np.sin(th)*cb[n, 0]
+        cth, sth = np.cos(th), np.sin(th)
+        hm = np.array(((cth, -sth, x), (sth, cth, y), (0, 0, 1)))
+
+        theta = (1.0/scan.shape[0])*np.arange(scan.shape[0])*(3/2)*np.pi
+        theta = (theta - self.scan_bound_percentage*np.pi)[::-1] - (3/4)*np.pi
+        pts = np.ones((3, scan.shape[0]))
+        pts[0, :] = scan*np.cos(theta)
+        pts[1, :] = scan*np.sin(theta)
+        pts = np.matmul(hm, pts)
+
+        x2 = pts[0]*pts[0]
+        y2 = pts[1]*pts[1]
+        return np.sqrt(x2 + y2)
+
+    def projectScans(self, scans, cmdv, ts):
+        pscans = np.empty(scans.shape)
+        for i in range(scans.shape[0]):
+            pscans[i] = self.projectScan(scans[i], cmdv[i], ts[i])
+        return pscans
+
     def originalScansDim(self):
         if self.scans is None: return -1
         return self.scans.shape[1]
@@ -121,7 +149,7 @@ class LaserScans:
         return segments
 
     def plotScan(self, scan, y=None):
-        theta = 0.01*np.arange(0, 75, 75/self.scan_center_range)*(3/2)*np.pi - self.scan_bound_percentage*(3/2)*np.pi
+        theta = (1.0/scan.shape[0])*np.arange(scan.shape[0])*(3/2)*np.pi - self.scan_bound_percentage*(3/2)*np.pi - (3/4)*np.pi
         theta = theta[::-1]
 
         x_axis = np.arange(scan.shape[0])
@@ -625,6 +653,13 @@ class RGAN:
         return self.GEN.predict(gen_in)[:, :, 0, 0]
 
 if __name__ == "__main__":
+    # params
+    batch_sz = 8
+    gan_batch_sz = 32
+    scan_idx = 1000 # 1000
+    to_show_idx = 10
+    scan_ahead_step = 15
+
     # DIAG_first_floor.txt
     # diag_labrococo.txt
     # diag_underground.txt
@@ -632,15 +667,23 @@ if __name__ == "__main__":
     ls.load("../../dataset/diag_underground.txt",
              clip_scans_at=8, scan_center_range=512)
 
+    # p_scan_num = 1000
+    # p_scans = ls.getScans()[scan_idx:scan_idx + p_scan_num]
+    # p_cmds = ls.cmdVel()[scan_idx:scan_idx + p_scan_num]
+    # p_ts = ls.timesteps()[scan_idx:scan_idx + p_scan_num]
+    # p_scans = np.array([p for p in p_scans[batch_sz + scan_ahead_step::batch_sz]])
+    # p_cmds = np.array([p_cmds[ns:ns + scan_ahead_step] \
+    #                    for ns in range(batch_sz, p_cmds.shape[0] - scan_ahead_step, batch_sz)])
+    # p_ts = np.array([p_ts[ns:ns + scan_ahead_step] \
+    #                  for ns in range(batch_sz, p_ts.shape[0] - scan_ahead_step, batch_sz)])
+
+    # ls.projectScan(p_scans[0], p_cmds[0], p_ts[0])
+    # exit()
+
     ae = AutoEncoder(ls.originalScansDim(),
                      variational=True, convolutional=False,
                      batch_size=128, latent_dim=10, verbose=False)
     ae.buildModel()
-
-    batch_sz = 8
-    gan_batch_sz = 32
-    scan_idx = 1000
-    to_show_idx = 10
 
     x, x_test = ls.getScans(0.9)
 
@@ -661,7 +704,6 @@ if __name__ == "__main__":
     dscan = ae.decode(latent)
     ls.plotScan(scan[to_show_idx], dscan[to_show_idx])
 
-    scan_ahead_step = 5
     scan_ahead = x[batch_sz + scan_ahead_step]
 
     gan = RGAN()
