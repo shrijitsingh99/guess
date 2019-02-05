@@ -38,64 +38,83 @@ class LaserScans:
         self.ts = None
         self.cmd_vel = None
         self.scans = None
-        self.scan_bound_percentage = 0
+        self.scan_bound = 0
+        self.scan_fov = (3/2)*np.pi  # [270 deg]
+        self.scan_res = 0.001389*np.pi # [0.25 deg]
+        self.scan_offset = 0
 
-    def load(self, datafile,
-             clip_scans_at=None, scan_center_range=None, scan_bound_percentage=None):
-        self.clip_scans_at = clip_scans_at
-        self.scan_center_range = scan_center_range
-        self.scan_bound_percentage = scan_bound_percentage
+    def load(self, datafile, scan_res, scan_fov,
+             scan_beam_num=None, clip_scans_at=None, scan_offset=0):
         self.data = np.loadtxt(datafile).astype('float32')
+        self.scan_res = scan_res
+        self.scan_fov = scan_fov
+        self.scan_beam_num = scan_beam_num
+        self.clip_scans_at = clip_scans_at
+        self.scan_offset = scan_offset
 
         self.ts = self.data[:, :1]
         self.cmd_vel = self.data[:, 1:7]
         self.scans = self.data[:, 7:]
-
         if self.verbose:
             print("timesteps --", self.ts.shape)
             print("cmd_vel --", self.cmd_vel.shape)
-            print("scans --", self.scans.shape, "range [", np.max(self.scans), "-", np.min(self.scans), "]")
+            print("scans --", self.scans.shape,
+                  "range [", np.min(self.scans), "-", np.max(self.scans), "]")
+
+        irange = 0
+        beam_num = int(self.scan_fov/self.scan_res)
+        assert beam_num == self.scans.shape[1], \
+            "Wrong number of scan beams " + str(beam_num) + " != " + str(self.scans.shape[1])
+        if not self.scan_beam_num is None:
+            if self.scan_beam_num + self.scan_offset < beam_num:
+                irange = int(0.5*(beam_num - self.scan_beam_num)) + self.scan_offset
+            elif self.scan_beam_num < beam_num:
+                irange = int(0.5*(beam_num - self.scan_beam_num))
+            self.scan_bound = (irange*self.scan_res)
+        else:
+            self.scan_bound = 0
+            self.scan_beam_num = beam_num
+        self.scans = self.scans[:, irange:irange + self.scan_beam_num]
+        if self.verbose:
+            r_msg = "[" + str(irange) + "-" + str(irange + self.scan_beam_num) + "]"
+            print("resized scans --", self.scans.shape, r_msg)
 
         if not self.clip_scans_at is None:
             np.clip(self.scans, a_min=0, a_max=self.clip_scans_at, out=self.scans)
-
-        if not self.scan_center_range is None:
-            i_range = 0.5*self.scans.shape[1] - 0.5*self.scan_center_range
-            i_range = i_range + 20
-            self.scan_bound_percentage = 1.0 - (float(self.scan_center_range)/self.scans.shape[1])
-            self.scan_bound_percentage = 0.5*self.scan_bound_percentage
-            self.scans = self.scans[:, int(i_range):int(i_range) + self.scan_center_range]
-        else:
-            if self.scan_bound_percentage != 0:
-                min_bound = int(self.scan_bound_percentage*self.scans.shape[1])
-                max_bound = int(self.scans.shape[1] - self.scan_bound_percentage*self.scans.shape[1])
-                self.scans = self.scans[:, min_bound:max_bound]
-                if self.verbose: print("scans bounds (min, max)=", min_bound, max_bound)
         self.scans = self.scans / self.clip_scans_at    # normalization makes the vae work
 
-    def initRand(self, rand_scans_num, scan_dim, clip_scans_at=1.0):
-        self.scan_center_range = scan_dim
-        self.scans = np.random.uniform(0.0, clip_scans_at, size=[rand_scans_num, scan_dim])
+    def initRand(self, rand_scans_num, scan_dim, clip_scans_at=5.0):
+        self.scan_beam_num = scan_dim
+        self.clip_scans_at = clip_scans_at
+        self.scans = np.random.uniform(0.0, 1.0, size=[rand_scans_num, scan_dim])
         self.cmd_vel = np.zeros((rand_scans_num, 6))
         self.ts = np.zeros((rand_scans_num, 1))
 
     def projectScan(self, scan, cmdv, ts):
-        sb, cb, tb = scan, cmdv, ts - ts[0]
-        tb = tb.reshape((cmdv.shape[0],))
-        x, y, th = 0.0, 0.0, 0.0
+        sb, cb, tb = scan, cmdv, np.zeros((cmdv.shape[0],))
+        for t in range(1, ts.shape[0]): tb[t] = ts[t] - ts[t - 1]
+        x, y, th = 0.0, -10.0, 0.0
+
         for n in range(cmdv.shape[0]):
-            th = th + tb[n]*2*cb[n, 5]
-            x = x + tb[n]*np.cos(th)*cb[n, 0]
-            y = y + tb[n]*np.sin(th)*cb[n, 0]
+            rk_th = th + 0.5*cb[n, 5]*tb[n]  # runge-kutta integration
+            x = x + cb[n, 0]*tb[n]*np.cos(rk_th)
+            y = y + cb[n, 0]*tb[n]*np.sin(rk_th)
+            th = th + cb[n, 5]*tb[n]
         cth, sth = np.cos(th), np.sin(th)
         hm = np.array(((cth, -sth, x), (sth, cth, y), (0, 0, 1)))
 
-        theta = (1.0/scan.shape[0])*np.arange(scan.shape[0])*(3/2)*np.pi
-        theta = (theta - self.scan_bound_percentage*np.pi)[::-1] - (3/4)*np.pi
-        pts = np.ones((3, scan.shape[0]))
-        pts[0, :] = scan*np.cos(theta)
-        pts[1, :] = scan*np.sin(theta)
+        assert scan.shape[0] == self.scan_beam_num, "Wrong scan size"
+        theta = self.scan_res*np.arange(-0.5*self.scan_beam_num, 0.5*self.scan_beam_num)
+        pts = np.ones((3, self.scan_beam_num))
+        pts[0] = scan*np.cos(theta)
+        pts[1] = scan*np.sin(theta)
+
+        # plt.figure()
+        # plt.axis('equal')
+        # plt.plot(pts[1], pts[0], label='ref')
         pts = np.matmul(hm, pts)
+        # plt.plot(pts[1], pts[0], label='proj')
+        # plt.legend()
 
         x2 = pts[0]*pts[0]
         y2 = pts[1]*pts[1]
@@ -149,10 +168,11 @@ class LaserScans:
         return segments
 
     def plotScan(self, scan, y=None):
-        theta = (1.0/scan.shape[0])*np.arange(scan.shape[0])*(3/2)*np.pi - self.scan_bound_percentage*(3/2)*np.pi - (3/4)*np.pi
+        assert scan.shape[0] == self.scan_beam_num, "Wrong scan size"
+        theta = self.scan_res*np.arange(-0.5*self.scan_beam_num, 0.5*self.scan_beam_num)
         theta = theta[::-1]
 
-        x_axis = np.arange(scan.shape[0])
+        x_axis = np.arange(self.scan_beam_num)
         segments = self.getScanSegments(scan, 0.99)
         if self.verbose: print("Segments -- ", np.array(segments).shape, "--", segments)
 
@@ -172,7 +192,8 @@ class LaserScans:
                 col = '#1f77b4'
                 plt.plot(x_axis[s[0]:s[1]], scan[s[0]:s[1]], 'o', markersize=0.5, color=col)
 
-        plt.subplot(122, projection='polar')
+        ax = plt.subplot(122, projection='polar')
+        ax.set_theta_offset(0.5*np.pi)
         plt.plot(theta, scan, color='lightgray')
         for s in segments:
             if s[2]:
@@ -637,7 +658,7 @@ class RGAN:
                                    (b + batch_sz, x.shape[0], d_loss[0], d_loss[1])
                         log_mesg = "%s  [A loss: %f, acc: %f]" % (log_mesg, a_loss[0], a_loss[1])
                         print(log_mesg)
-        return np.array(ret).reshape(4,)
+        return np.array(ret)
 
     def latentInputDim(self):
         return self.latent_input_dim
@@ -658,16 +679,18 @@ if __name__ == "__main__":
     gan_batch_sz = 32
     scan_idx = 1000 # 1000
     to_show_idx = 10
-    scan_ahead_step = 15
+    scan_ahead_step = 5
 
     # DIAG_first_floor.txt
     # diag_labrococo.txt
     # diag_underground.txt
     ls = LaserScans(verbose=True)
     ls.load("../../dataset/diag_underground.txt",
-             clip_scans_at=8, scan_center_range=512)
+            scan_res=0.00653590704, scan_fov=(3/2)*np.pi,
+            scan_beam_num=512, clip_scans_at=8, scan_offset=6)
 
     # p_scan_num = 1000
+    # ls.plotScan(ls.getScans()[p_scan_num])
     # p_scans = ls.getScans()[scan_idx:scan_idx + p_scan_num]
     # p_cmds = ls.cmdVel()[scan_idx:scan_idx + p_scan_num]
     # p_ts = ls.timesteps()[scan_idx:scan_idx + p_scan_num]
@@ -676,9 +699,7 @@ if __name__ == "__main__":
     #                    for ns in range(batch_sz, p_cmds.shape[0] - scan_ahead_step, batch_sz)])
     # p_ts = np.array([p_ts[ns:ns + scan_ahead_step] \
     #                  for ns in range(batch_sz, p_ts.shape[0] - scan_ahead_step, batch_sz)])
-
-    # ls.projectScan(p_scans[0], p_cmds[0], p_ts[0])
-    # exit()
+    # pscan = ls.projectScan(p_scans[0], p_cmds[0], p_ts[0])
 
     ae = AutoEncoder(ls.originalScansDim(),
                      variational=True, convolutional=False,
@@ -688,7 +709,7 @@ if __name__ == "__main__":
     x, x_test = ls.getScans(0.9)
 
     ae.fitModel(x[:1000], x_test=None, epochs=30, verbose=0)
-    print('Fitting model done.')
+    print('Fitting VAE model done.')
 
     scan = x[scan_idx:(scan_idx + batch_sz*gan_batch_sz)]
     latent = ae.encode(scan)
@@ -709,7 +730,7 @@ if __name__ == "__main__":
     gan = RGAN()
     gan.buildModel((ls.originalScansDim(), 1, 1,), 16, batch_sz)
 
-    conc = 8192
+    conc = int(8192/4)
     latent = ae.encode(x[:conc])
     in_latent = np.concatenate((latent, ls.cmdVel()[:conc]), axis=1)
     in_latent = np.reshape(in_latent,

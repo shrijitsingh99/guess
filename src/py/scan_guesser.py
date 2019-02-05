@@ -63,14 +63,7 @@ class ScanGuesser:
                 self.updating_model = True
                 self.update_mtx.release()
 
-                timer = ElapsedTimer()
-                print("-- Model updated in", end='')
-                ae_metrics = self.__updateAE(scans)
-                gan_metrics = self.__updateGan(scans, cmd_vel, ts, False) # False : verbose
-                print("\033[1;32m", timer.elapsed_time(), "\033[0m")
-                print("  -- AE loss:", ae_metrics[0], "- acc:", ae_metrics[1])
-                print("  -- GAN d-loss:", gan_metrics[0], "- d-acc:", gan_metrics[1], end='')
-                print(" - a-loss:", gan_metrics[2], "- a-acc:", gan_metrics[3], "\n")
+                self.__fitModel(thr_scans, thr_cmd_vel, thr_ts, verbose=False)
 
                 self.update_mtx.acquire()
                 self.updating_model = False
@@ -120,9 +113,10 @@ class ScanGuesser:
                 next_scan = self.ls.projectScans(next_scan, next_cmdv, next_ts)
         return x_latent, next_scan
 
-    def __updateAE(self, scans, verbose=0):
-        if self.verbose: verbose = 1
-        return self.ae.fitModel(scans, epochs=self.ae_epochs, verbose=verbose)
+    def __updateAE(self, scans, verbose=None):
+        if verbose is None: verbose = self.verbose
+        v = 1 if verbose else 0
+        return self.ae.fitModel(scans, epochs=self.ae_epochs, verbose=v)
 
     def __updateGan(self, scans, cmd_vel, ts, verbose=False):
         latent = self.encodeScan(scans)
@@ -131,18 +125,30 @@ class ScanGuesser:
                                  train_steps=self.gan_train_steps,
                                  batch_sz=self.gan_batch_sz, verbose=verbose)
 
-    def init(self, raw_scans_file, init_models=False, init_scan_batch_num=None):
+    def __fitModel(self, scans, cmd_vel, ts, verbose=False):
+        timer = ElapsedTimer()
+        print("-- Update AutoEncoder and GAN... ", end='')
+        ae_metrics = self.__updateAE(scans)
+        gan_metrics = self.__updateGan(scans, cmd_vel, ts)[-1]
+        print("done (\033[1;32m" + timer.elapsed_time() + "\033[0m).")
+        print("  -- AE loss:", ae_metrics[0], "- acc:", ae_metrics[1])
+        print("  -- GAN d-loss:", gan_metrics[0], "- d-acc:", gan_metrics[1], end='')
+        print(" - a-loss:", gan_metrics[2], "- a-acc:", gan_metrics[3])
+
+    def init(self, raw_scans_file, init_models=False, init_scan_batch_num=None, scan_offset=0):
         print("- Initialize:")
         init_scan_num = self.gan_batch_sz*self.scan_batch_sz*init_scan_batch_num + self.gen_scan_ahead_step
         if raw_scans_file is None:
             if init_scan_batch_num is None: init_scan_batch_num = 1
 
             print("-- Init random scans... ", end='')
-            self.ls.initRand(init_scan_num, self.original_scan_dim)
+            self.ls.initRand(init_scan_num, self.original_scan_dim,
+                             clip_scans_at=self.clip_scans_at)
         else:
             print("-- Init scans from dataset... ", end='')
-            self.ls.load(raw_scans_file,
-                         clip_scans_at=self.clip_scans_at, scan_center_range=self.original_scan_dim)
+            self.ls.load(raw_scans_file, scan_res=0.00653590704, scan_fov=(3/2)*np.pi,
+                         scan_beam_num=self.original_scan_dim,
+                         clip_scans_at=self.clip_scans_at, scan_offset=scan_offset)
         print("done.")
 
         if init_models:
@@ -155,14 +161,7 @@ class ScanGuesser:
                 cmd_vel = self.ls.cmdVel()[:init_scan_num]
                 ts = self.ls.timesteps()[:init_scan_num]
 
-            timer = ElapsedTimer()
-            print("-- Init AutoEncoder and GAN... ", end='')
-            ae_metrics = self.__updateAE(scans)
-            gan_metrics = self.__updateGan(scans, cmd_vel, ts)
-            print("done (\033[1;32m" + timer.elapsed_time() + "\033[0m).")
-            print("  -- AE loss:", ae_metrics[0], "- acc:", ae_metrics[1])
-            print("  -- GAN d-loss:", gan_metrics[0], "- d-acc:", gan_metrics[1], end='')
-            print(" - a-loss:", gan_metrics[2], "- a-acc:", gan_metrics[3])
+            self.__fitModel(scans, cmd_vel, ts, verbose=False)
             if self.start_update_thr:
                 print("-- Init update thread... ", end='')
                 self.thr.start()
@@ -193,16 +192,9 @@ class ScanGuesser:
             self.update_mtx.release()
 
         if not self.start_update_thr:
-            timer = ElapsedTimer()
-            print("-- Model updated in", end='')
-            ae_metrics = self.__updateAE(self.online_scans[-min_scan_num:])
-            gan_metrics = self.__updateGan(self.online_scans[-min_scan_num:],
-                                           self.online_cmd_vel[-min_scan_num:],
-                                           self.online_ts[-min_scan_num:], verbose=False)
-            print("\033[1;32m", timer.elapsed_time(), "\033[0m")
-            print("  -- AE loss:", ae_metrics[0], "- acc:", ae_metrics[1])
-            print("  -- GAN d-loss:", gan_metrics[0], "- d-acc:", gan_metrics[1], end='')
-            print(" - a-loss:", gan_metrics[2], "- a-acc:", gan_metrics[3], "\n")
+            self.__fitModel(self.online_scans[-min_scan_num:],
+                            self.online_cmd_vel[-min_scan_num:],
+                            self.online_ts[-min_scan_num:], verbose=False)
         return True
 
     def addRawScans(self, raw_scans, cmd_vel, ts):
@@ -278,7 +270,7 @@ if __name__ == "__main__":
     # diag_labrococo.txt
     # diag_underground.txt
     guesser.init("../../dataset/diag_underground.txt",
-                 init_models=True, init_scan_batch_num=1)
+                 init_models=True, init_scan_batch_num=1, scan_offset=6)
 
     scan_idx = 8
     scans = guesser.getScans()[scan_idx:scan_idx + scan_seq_batch]
@@ -286,10 +278,8 @@ if __name__ == "__main__":
     scan_guessed = guesser.getScans()[scan_idx + scan_ahead_step]
 
     gscan, _ = guesser.generateScan(scans, cmdvs)
-    # guesser.plotScan(scan_guessed,
-    #                  guesser.decodeScan(guesser.encodeScan(scan_guessed))[0])
 
-    for i in range(5):
+    for i in range(2):
         if guesser.simStep():
             if i == -1:
                 gscan, _ = guesser.generateScan(scans, cmdvs)
