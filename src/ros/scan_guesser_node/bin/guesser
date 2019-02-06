@@ -32,6 +32,7 @@ class ScanGuesserNode:
         self.cmd_vel_sub = rospy.Subscriber(cmd_vel_topic, Twist, self.cmdVelCb)
 
         self.mtx = Lock()
+        self.irange = 0
         cmd_vel_sz = 7  # 6D velocity + timestamp in seconds
         self.cmd_vel = np.zeros((cmd_vel_sz - 1,), dtype=np.float32)
         self.buffer_idx = 0
@@ -45,10 +46,10 @@ class ScanGuesserNode:
         self.data_buffer[self.buffer_idx, -1] = rospy.get_time()
         self.mtx.release()
         buff_section = self.scan_batch_sz - self.buffer_idx
-        irange = int(0.5*(len(data) - self.scan_beam_num))
+        self.irange = int(0.5*(len(data) - self.scan_beam_num))
 
         self.data_buffer[self.buffer_idx,
-                         :self.scan_beam_num] = data[irange:irange + self.scan_beam_num]
+                         :self.scan_beam_num] = data[self.irange:self.irange + self.scan_beam_num]
         cmdv_batch = np.zeros((self.scan_batch_sz, self.cmd_vel.shape[0] + 1))
         cmdv_batch[:buff_section] = self.data_buffer[self.buffer_idx:, self.scan_beam_num:]
         cmdv_batch[(buff_section - 1):] = self.data_buffer[:self.buffer_idx + 1, self.scan_beam_num:]
@@ -88,14 +89,22 @@ class ScanGuesserNode:
                              tf.transformations.quaternion_from_euler(0, 0, sg_tf[2]),
                              rospy.Time.now(), self.gtf_name, self.base_tf)
 
-            sg_scan_msg = data
-            sg_scan_msg.header.frame_id = self.gtf_name
-            sg_scan_msg.ranges = list(sg_data[0])
-            self.sg_scan_pub.publish(sg_scan_msg)
-
             sv_scan_msg = data
+            sg_scan_msg = data
+
+            hfov_angle = 2.199424
+            sv_scan_msg.angle_min = -hfov_angle
+            sv_scan_msg.angle_max = hfov_angle
             sv_scan_msg.ranges = list(sg_data[1])
+            sv_scan_msg.intensities = []
             self.sv_scan_pub.publish(sv_scan_msg)
+
+            sg_scan_msg.angle_min = -hfov_angle
+            sg_scan_msg.angle_max = hfov_angle
+            sg_scan_msg.ranges = list(sg_data[0])
+            sg_scan_msg.intensities = []
+            sg_scan_msg.header.frame_id = self.gtf_name
+            self.sg_scan_pub.publish(sg_scan_msg)
 
     def run(self):
         handshake_port = 9550
