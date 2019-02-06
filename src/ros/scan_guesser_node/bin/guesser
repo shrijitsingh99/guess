@@ -4,7 +4,11 @@
 import numpy as np
 from threading import Thread, Lock
 
+#import roslib
+# roslib.load_manifest('guesser')
+
 import rospy
+import tf
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import LaserScan
 import scan_guesser_node.guesser_utils as sgu
@@ -12,12 +16,16 @@ from scan_guesser_node.guesser_utils import Provider, Receiver
 
 class ScanGuesserNode:
     def __init__(self):
-        self.scan_batch_sz = int(rospy.get_param('~scan_batch_sz', '8'))
-        self.scan_beam_num = int(rospy.get_param('~scan_beam_num', '512'))
         cmd_vel_topic = rospy.get_param('~cmd_vel_topic', '/cmd_vel_mux/input/teleop')
         scan_topic = rospy.get_param('~scan_topic', '/scan')
         sg_scan_topic = rospy.get_param('~sg_scan_topic', '/sg_scan')
         sv_scan_topic = rospy.get_param('~sv_scan_topic', '/sv_scan')
+        self.base_tf = rospy.get_param('~base_tf', 'base_laser_link')
+        self.gtf_name = rospy.get_param('~gtf_name', 'gen_tf')
+        self.scan_batch_sz = int(rospy.get_param('~scan_batch_sz', '8'))
+        self.scan_beam_num = int(rospy.get_param('~scan_beam_num', '512'))
+        self.br = tf.TransformBroadcaster()
+
         self.sg_scan_pub = rospy.Publisher(sg_scan_topic, LaserScan, queue_size=10)
         self.sv_scan_pub = rospy.Publisher(sv_scan_topic, LaserScan, queue_size=10)
         self.scan_sub = rospy.Subscriber(scan_topic, LaserScan, self.scanCb)
@@ -29,7 +37,7 @@ class ScanGuesserNode:
         self.buffer_idx = 0
         self.data_buffer = np.zeros((self.scan_batch_sz, cmd_vel_sz + self.scan_beam_num))
         self.provider = Provider(self.scan_batch_sz*(cmd_vel_sz + self.scan_beam_num), dport=9559)
-        self.receiver = Receiver(self.scan_beam_num*2, dport=9558)
+        self.receiver = Receiver(self.scan_beam_num*2 + 3, dport=9558)
 
     def __reshapeData(self, data):
         self.mtx.acquire()
@@ -50,9 +58,9 @@ class ScanGuesserNode:
         self.buffer_idx = self.buffer_idx + 1
 
         sreshaped = scan_batch.reshape(scan_batch.shape[0]*scan_batch.shape[1],)
-        sreshaped = (sreshaped*100).astype(np.int16)
+        sreshaped = (sreshaped*10000).astype(np.int16)
         creshaped = cmdv_batch.reshape(cmdv_batch.shape[0]*cmdv_batch.shape[1],)
-        creshaped = (creshaped*100).astype(np.int16)
+        creshaped = (creshaped*10000).astype(np.int16)
         reshaped = np.concatenate((sreshaped, creshaped))
         return reshaped
 
@@ -72,9 +80,16 @@ class ScanGuesserNode:
                 # print "Connection problem... " + str(e)
                 return
 
-            sg_data = self.receiver.getData().reshape((2, self.scan_beam_num))*0.01
+            sg_data = self.receiver.getData()*0.0001
+            sg_tf = sg_data[-3:]
+            sg_data = sg_data[:-3].reshape((2, self.scan_beam_num))
+
+            self.br.sendTransform((sg_tf[0], sg_tf[1], 0),
+                             tf.transformations.quaternion_from_euler(0, 0, sg_tf[2]),
+                             rospy.Time.now(), self.gtf_name, self.base_tf)
 
             sg_scan_msg = data
+            sg_scan_msg.header.frame_id = self.gtf_name
             sg_scan_msg.ranges = list(sg_data[0])
             self.sg_scan_pub.publish(sg_scan_msg)
 

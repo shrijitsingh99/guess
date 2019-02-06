@@ -1,29 +1,32 @@
 <launch>
   <arg name="mapfile" default="$(find stage_ros)/world/willow-full.yaml" />
   <arg name="worldfile" default="$(find stage_ros)/world/willow-erratic.world" />
+  <arg name="urdffile" default="" />
   <arg name="rviz_cfg" default="$(find stage_ros)/rviz/stage.rviz" />
-  <arg name="initial_pose_x" default="5.5"/>
-  <arg name="initial_pose_y" default="1.75"/>
-  <arg name="initial_pose_a" default="0.0"/>
+  <arg name="initial_pose_x" default="5.5" />
+  <arg name="initial_pose_y" default="1.75" />
+  <arg name="initial_pose_a" default="0.0" />
+  
+  <!--param name="robot_description" textfile="$(arg urdffile)" /-->
 
   <node name="map_server" pkg="map_server" type="map_server" args="$(arg mapfile)">
-    <param name="frame_id" value="/map"/>
+    <param name="frame_id" value="/map" />
   </node>
 
   <node pkg="amcl" type="amcl" name="amcl">
-    <param name="scan_topic" value="scan"/>
-    <param name="use_map_topic" value="true"/>
-    <param name="initial_pose_x" value="$(arg initial_pose_x)"/>
-    <param name="initial_pose_y" value="$(arg initial_pose_y)"/>
-    <param name="initial_pose_a" value="$(arg initial_pose_a)"/>
+    <param name="scan_topic" value="scan" />
+    <param name="use_map_topic" value="true" />
+    <param name="initial_pose_x" value="$(arg initial_pose_x)" />
+    <param name="initial_pose_y" value="$(arg initial_pose_y)" />
+    <param name="initial_pose_a" value="$(arg initial_pose_a)" />
   </node>
 
   <node name="stage" pkg="stage_ros" type="stageros" args="$(arg worldfile)">
-    <remap from="/base_scan" to="/scan"/>
-    <remap from="/cmd_vel" to="/teleop_velocity_smoother/raw_cmd_vel"/>
+    <remap from="/base_scan" to="/scan" />
+    <remap from="/cmd_vel" to="/teleop_velocity_smoother/raw_cmd_vel" />
   </node>
 
   <include file="$(find turtlebot_teleop)/launch/logitech.launch" />
 
-  <node name="rviz" pkg="rviz" type="rviz" args="-d $(arg rviz_cfg)"/>
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(arg rviz_cfg)" />
 </launch>

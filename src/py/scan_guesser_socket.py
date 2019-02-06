@@ -67,18 +67,20 @@ if __name__ == "__main__":
     add_scan = 0 # number of pkg receive to update
     guesser = ScanGuesser(scan_length, # original_scan_dim
                           net_model="lstm",  # default; thin; lstm
-                          scan_batch_sz=scan_seq_batch,  # sequence of scans to concatenate to create one input
+                          scan_batch_sz=scan_seq_batch,  # sequence of scans as input
+                          gen_scan_ahead_step=scan_ahead_step,  # \# of 'scansteps' to look ahead
+                          clip_scans_at=clip_scans_at,  # max beam length [m]
+                          scan_res=0.00856798, scan_fov=(3/2)*np.pi,
                           ae_epochs=30,
                           ae_variational=True, ae_convolutional=False,
-                          clip_scans_at=clip_scans_at,  # max beam length [m]
-                          gen_scan_ahead_step=scan_ahead_step,  # number of 'scansteps' to look ahaed for generation
-                          gan_batch_sz=4, gan_train_steps=15, start_update_thr=True)
+                          gan_batch_sz=8, gan_train_steps=15, start_update_thr=True)
 
     guesser.init(None, init_models=True, init_scan_batch_num=1)
 
-    # 7 = 6D velocity + timestamp in seconds
+    # 6D velocity + timestamp in seconds
     receiver = Receiver((7 + scan_length)*scan_seq_batch, dport=9559)
-    provider = Provider(scan_length*2, dport=9558)
+    # generated and decoded scans + generated transform parameters
+    provider = Provider(scan_length*2 + 3, dport=9558)
 
     handshake_port = 9550
     print("-- Requesting modules handshake on localhost:" + str(handshake_port))
@@ -87,9 +89,9 @@ if __name__ == "__main__":
 
     print("\n-- Staring main loop...\n")
     i = 0
-    while i < 100:
+    while i < 10:
         i = i + 0
-        try: data_batch_srz = receiver.getData()*0.01
+        try: data_batch_srz = receiver.getData()*0.0001
         except Exception as e:
             print("Error", str(e))
             continue
@@ -107,7 +109,8 @@ if __name__ == "__main__":
         else: add_scan = add_scan + 1
 
         try:
-            gscan, vscan = guesser.generateRawScan(scan_batch, cmdv_batch)
+            gscan, vscan, hp = guesser.generateRawScan(scan_batch, cmdv_batch, ts_batch)
             to_send = np.concatenate((gscan, vscan[-1]))
-            provider.send((to_send*100).astype(np.int16))
+            to_send = np.concatenate((to_send, hp))
+            provider.send((to_send*10000).astype(np.int16))
         except Exception as e: print("Message not sent. ", str(e))

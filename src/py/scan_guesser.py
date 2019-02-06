@@ -3,13 +3,15 @@
 
 import numpy as np
 from threading import Thread, Lock
-from utility_guess import LaserScans, AutoEncoder, GAN, RGAN, ElapsedTimer
+from utility_guess import LaserScans, ElapsedTimer
+from utility_guess import AutoEncoder, GAN, RGAN, SimpleLSTM
 import matplotlib.pyplot as plt
 
 class ScanGuesser:
     def __init__(self,
                  original_scan_dim, net_model="default",
-                 scan_batch_sz=8, clip_scans_at=8, gen_scan_ahead_step=1,
+                 scan_batch_sz=8, clip_scans_at=8,
+                 scan_res=0.00653590704, scan_fov=(3/2)*np.pi, gen_scan_ahead_step=1,
                  gan_batch_sz=32, gan_train_steps=5,
                  ae_variational=True, ae_convolutional=False,
                  ae_batch_sz=128, ae_latent_dim=10, ae_intermediate_dim=128, ae_epochs=20,
@@ -17,6 +19,8 @@ class ScanGuesser:
         self.start_update_thr = start_update_thr
         self.verbose = verbose
         self.original_scan_dim = original_scan_dim
+        self.scan_resolution = scan_res
+        self.scan_fov = scan_fov
         self.net_model = net_model
         self.scan_batch_sz = scan_batch_sz
         self.clip_scans_at = clip_scans_at
@@ -31,6 +35,8 @@ class ScanGuesser:
         self.sim_step = 0
 
         self.ls = LaserScans(verbose=verbose)
+        self.projector = SimpleLSTM(scan_batch_sz, 7, 3,
+                                    batch_size=self.gan_batch_sz, verbose=verbose)
         self.ae = AutoEncoder(self.original_scan_dim,
                               variational=ae_variational, convolutional=ae_convolutional,
                               latent_dim=ae_latent_dim, intermediate_dim=ae_intermediate_dim,
@@ -63,7 +69,7 @@ class ScanGuesser:
                 self.updating_model = True
                 self.update_mtx.release()
 
-                self.__fitModel(thr_scans, thr_cmd_vel, thr_ts, verbose=False)
+                self.__fitModel(scans, cmd_vel, ts, verbose=False)
 
                 self.update_mtx.acquire()
                 self.updating_model = False
@@ -72,6 +78,7 @@ class ScanGuesser:
 
     def __initModels(self):
         self.ae.buildModel()
+        self.projector.buildModel()
         if self.net_model == "lstm":
             self.gan_latent_dim = (6 + self.ae_latent_dim)
             self.gan = RGAN(verbose=self.verbose)
@@ -92,26 +99,37 @@ class ScanGuesser:
         else:
             x_latent = np.reshape(x_latent[:n_rows*self.scan_batch_sz],
                                   (n_rows, self.gan_latent_dim))
-        next_scan = None
+
+        next_scan, pparams, hp = None, None, None
         if not scans is None and scans.shape[0] > self.scan_batch_sz + self.gen_scan_ahead_step:
             next_scan = scans[self.scan_batch_sz + self.gen_scan_ahead_step::self.scan_batch_sz]
-        if not next_scan is None:
             if x_latent.shape[0] != next_scan.shape[0]:
                 tail = np.tile(scans[-1:], (x_latent.shape[0] - next_scan.shape[0], 1))
                 next_scan = np.concatenate((next_scan, tail))
 
-            next_cmdv = None
-            if cmd_vel.shape[0] > self.scan_batch_sz + self.gen_scan_ahead_step:
-                next_cmdv = [cmd_vel[ns:ns + self.gen_scan_ahead_step] \
-                             for ns in range(0, cmd_vel.shape[0] - self.scan_batch_sz,
-                                             self.scan_batch_sz)]
-                next_cmdv = np.array(next_cmdv)
-                next_ts = [ts[ns:ns + self.gen_scan_ahead_step] \
-                           for ns in range(0, ts.shape[0] - self.scan_batch_sz,
-                                           self.scan_batch_sz)]
-                next_ts = np.array(next_ts)
-                next_scan = self.ls.projectScans(next_scan, next_cmdv, next_ts)
-        return x_latent, next_scan
+        if not cmd_vel is None and not ts is None \
+           and ts.shape[0] > self.scan_batch_sz + self.gen_scan_ahead_step \
+           and cmd_vel.shape[0] > self.scan_batch_sz + self.gen_scan_ahead_step:
+            prev_cmdv = [cmd_vel[ns:ns + self.scan_batch_sz] \
+                         for ns in range(0, cmd_vel.shape[0] - self.gen_scan_ahead_step,
+                                         self.scan_batch_sz)]
+            prev_cmdv = np.array(prev_cmdv)
+            prev_ts = [ts[ns:ns + self.scan_batch_sz] \
+                       for ns in range(0, ts.shape[0] - self.gen_scan_ahead_step,
+                                       self.scan_batch_sz)]
+            prev_ts = np.array(prev_ts)
+            if len(prev_ts.shape) != 3:
+                prev_ts = prev_ts.reshape((prev_ts.shape[0], prev_ts.shape[1], 1))
+            pparams = np.concatenate((prev_cmdv, prev_ts), axis=2)
+
+            next_cmdv = [cmd_vel[ns:ns + self.gen_scan_ahead_step] \
+                         for ns in range(self.scan_batch_sz, cmd_vel.shape[0], self.scan_batch_sz)]
+            next_cmdv = np.array(next_cmdv)
+            next_ts = [ts[ns:ns + self.gen_scan_ahead_step] \
+                       for ns in range(self.scan_batch_sz, ts.shape[0], self.scan_batch_sz)]
+            next_ts = np.array(next_ts)
+            _, hp = self.ls.computeTransforms(next_cmdv, next_ts)
+        return x_latent, next_scan, pparams, hp
 
     def __updateAE(self, scans, verbose=None):
         if verbose is None: verbose = self.verbose
@@ -120,14 +138,15 @@ class ScanGuesser:
 
     def __updateGan(self, scans, cmd_vel, ts, verbose=False):
         latent = self.encodeScan(scans)
-        x_latent, next_scan = self.__reshapeGanInput(scans, cmd_vel, ts, latent)
+        x_latent, next_scan, pp, hp = self.__reshapeGanInput(scans, cmd_vel, ts, latent)
+        self.projector.fitModel(pp, hp, epochs=20)
         return self.gan.fitModel(x_latent, next_scan,
                                  train_steps=self.gan_train_steps,
                                  batch_sz=self.gan_batch_sz, verbose=verbose)
 
     def __fitModel(self, scans, cmd_vel, ts, verbose=False):
         timer = ElapsedTimer()
-        print("-- Update AutoEncoder and GAN... ", end='')
+        print("-- Update model... ", end='')
         ae_metrics = self.__updateAE(scans)
         gan_metrics = self.__updateGan(scans, cmd_vel, ts)[-1]
         print("done (\033[1;32m" + timer.elapsed_time() + "\033[0m).")
@@ -142,11 +161,12 @@ class ScanGuesser:
             if init_scan_batch_num is None: init_scan_batch_num = 1
 
             print("-- Init random scans... ", end='')
-            self.ls.initRand(init_scan_num, self.original_scan_dim,
+            self.ls.initRand(init_scan_num,
+                             self.original_scan_dim, self.scan_resolution, self.scan_fov,
                              clip_scans_at=self.clip_scans_at)
         else:
             print("-- Init scans from dataset... ", end='')
-            self.ls.load(raw_scans_file, scan_res=0.00653590704, scan_fov=(3/2)*np.pi,
+            self.ls.load(raw_scans_file, scan_res=self.scan_resolution, scan_fov=self.scan_fov,
                          scan_beam_num=self.original_scan_dim,
                          clip_scans_at=self.clip_scans_at, scan_offset=scan_offset)
         print("done.")
@@ -210,24 +230,29 @@ class ScanGuesser:
     def decodeScan(self, scans_latent):
         return self.ae.decode(scans_latent)
 
-    def generateScan(self, scans, cmd_vel):
+    def generateScan(self, scans, cmd_vel, ts):
         if self.verbose: timer = ElapsedTimer()
-        if scans.shape[0] < self.scan_batch_sz: None
+        if scans.shape[0] < self.scan_batch_sz: return None
 
         latent = self.encodeScan(scans)
-        x_latent, _ = self.__reshapeGanInput(None, cmd_vel, None, latent)
-
+        x_latent, _, _, _ = self.__reshapeGanInput(None, cmd_vel, ts, latent)
         gen = self.gan.generate(x_latent)
-        if self.verbose: print("Prediction in", timer.elapsed_time())
-        return gen[0], self.decodeScan(latent)
 
-    def generateRawScan(self, raw_scans, cmd_vel):
+        ts = ts.reshape((1, ts.shape[0], 1,))
+        cmd_vel = cmd_vel.reshape((1, cmd_vel.shape[0], cmd_vel.shape[1],))
+        pparams = np.concatenate((cmd_vel, ts), axis=2)
+        hp = self.projector.predict(pparams)
+
+        if self.verbose: print("Prediction in", timer.elapsed_time())
+        return gen[0], self.decodeScan(latent), hp[0]
+
+    def generateRawScan(self, raw_scans, cmd_vel, ts):
         if raw_scans.shape[0] < self.scan_batch_sz: return None
         scans = raw_scans
         np.clip(scans, a_min=0, a_max=self.clip_scans_at, out=scans)
         scans = scans/self.clip_scans_at
-        gscan, vscan = self.generateScan(scans, cmd_vel)
-        return gscan*self.clip_scans_at, vscan*self.clip_scans_at
+        gscan, vscan, hp = self.generateScan(scans, cmd_vel, ts)
+        return gscan*self.clip_scans_at, vscan*self.clip_scans_at, hp
 
     def getScans(self):
         if not self.online_scans is None and self.online_scans.shape[0] > self.scan_batch_sz:
@@ -239,9 +264,17 @@ class ScanGuesser:
             return self.online_cmd_vel
         else: return self.ls.cmdVel()
 
+    def timesteps(self):
+        if not self.online_ts is None and self.online_ts.shape[0] > self.scan_batch_sz:
+            return self.online_ts
+        else: return self.ls.timesteps()
+
     def plotScan(self, scan, decoded_scan=None):
         if decoded_scan is None: self.ls.plotScan(scan)
         else: self.ls.plotScan(scan, decoded_scan)
+
+    def plotProjection(self, scan, hm_params=None, gen_params=None):
+        self.ls.plotProjection(scan, params0=hm_params, params1=gen_params)
 
     def simStep(self):
         print("--- SIMULATE step:",
@@ -261,11 +294,12 @@ if __name__ == "__main__":
     scan_seq_batch = 8
     guesser = ScanGuesser(512, # number of scan beams considered
                           net_model="lstm",  # default; thin; lstm
-                          scan_batch_sz=scan_seq_batch,  # sequence of scans to concatenate to create one input
+                          scan_batch_sz=scan_seq_batch,  # sequence of scans as input
+                          scan_res=0.00653590704, scan_fov=(3/2)*np.pi,
+                          gen_scan_ahead_step=scan_ahead_step, # \# of 'scansteps' to look ahead
                           ae_epochs=30,
                           ae_variational=True, ae_convolutional=False,
-                          gen_scan_ahead_step=scan_ahead_step,  # number of 'scansteps' to look ahaed for generation
-                          gan_batch_sz=32, gan_train_steps=40, start_update_thr=False)
+                          gan_batch_sz=32, gan_train_steps=30, start_update_thr=False)
     # DIAG_first_floor.txt
     # diag_labrococo.txt
     # diag_underground.txt
@@ -275,19 +309,22 @@ if __name__ == "__main__":
     scan_idx = 8
     scans = guesser.getScans()[scan_idx:scan_idx + scan_seq_batch]
     cmdvs = guesser.cmdVel()[scan_idx:scan_idx + scan_seq_batch]
-    scan_guessed = guesser.getScans()[scan_idx + scan_ahead_step]
+    ts = guesser.timesteps()[scan_idx:scan_idx + scan_seq_batch]
+    scan_guessed = guesser.getScans()[scan_idx + scan_seq_batch + scan_ahead_step]
 
-    gscan, _ = guesser.generateScan(scans, cmdvs)
+    gscan, _, hp = guesser.generateScan(scans, cmdvs, ts)
+    guesser.plotProjection(scan_guessed, gen_params=hp)
 
-    for i in range(2):
+    for i in range(25):
         if guesser.simStep():
             if i == -1:
-                gscan, _ = guesser.generateScan(scans, cmdvs)
+                gscan, _, _ = guesser.generateScan(scans, cmdvs, ts)
                 guesser.plotScan(gscan)
 
-    gscan, dscan = guesser.generateScan(scans, cmdvs)
+    gscan, dscan, hp = guesser.generateScan(scans, cmdvs, ts)
     guesser.plotScan(scan_guessed, dscan[0])
     guesser.plotScan(gscan)
+    guesser.plotProjection(scan_guessed, gen_params=hp)
 
     import matplotlib.pyplot as plt
     plt.show()

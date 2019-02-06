@@ -83,8 +83,10 @@ class LaserScans:
             np.clip(self.scans, a_min=0, a_max=self.clip_scans_at, out=self.scans)
         self.scans = self.scans / self.clip_scans_at    # normalization makes the vae work
 
-    def initRand(self, rand_scans_num, scan_dim, clip_scans_at=5.0):
+    def initRand(self, rand_scans_num, scan_dim, scan_res, scan_fov, clip_scans_at=5.0):
         self.scan_beam_num = scan_dim
+        self.scan_res = scan_res
+        self.scan_fov = scan_fov
         self.clip_scans_at = clip_scans_at
         self.scans = np.random.uniform(0.0, 1.0, size=[rand_scans_num, scan_dim])
         self.cmd_vel = np.zeros((rand_scans_num, 6))
@@ -208,7 +210,8 @@ class LaserScans:
             else:
                 col = '#1f77b4'
                 plt.plot(theta[s[0]:s[1]], scan[s[0]:s[1]], 'o', markersize=0.5, color=col)
-    def plotProjection(self, scan, hparams, params):
+
+    def plotProjection(self, scan, params0=None, params1=None):
         assert scan.shape[0] == self.scan_beam_num, "Wrong scan size"
         theta = self.scan_res*np.arange(-0.5*self.scan_beam_num, 0.5*self.scan_beam_num)
         pts = np.ones((3, self.scan_beam_num))
@@ -219,19 +222,20 @@ class LaserScans:
         plt.axis('equal')
         plt.plot(pts[1], pts[0], label='ref')
 
-        x, y, th = hparams[0], hparams[1], hparams[2]
-        cth, sth = np.cos(th), np.sin(th)
-        hm = np.array(((cth, -sth, x), (sth, cth, y), (0, 0, 1)))
+        if not params0 is None:
+            x, y, th = params0[0], params0[1], params0[2]
+            cth, sth = np.cos(th), np.sin(th)
+            hm = np.array(((cth, -sth, x), (sth, cth, y), (0, 0, 1)))
+            pts0 = np.matmul(hm, pts)
+            plt.plot(pts0[1], pts0[0], label='proj')
 
-        pts_proj = np.matmul(hm, pts)
-        plt.plot(pts_proj[1], pts_proj[0], label='proj')
+        if not params1 is None:
+            x, y, th = params1[0], params1[1], params1[2]
+            cth, sth = np.cos(th), np.sin(th)
+            hm = np.array(((cth, -sth, x), (sth, cth, y), (0, 0, 1)))
+            pts1 = np.matmul(hm, pts)
+            plt.plot(pts1[1], pts1[0], label='pred')
 
-        x, y, th = params[0], params[1], params[2]
-        cth, sth = np.cos(th), np.sin(th)
-        hm = np.array(((cth, -sth, x), (sth, cth, y), (0, 0, 1)))
-
-        pts_pred = np.matmul(hm, pts)
-        plt.plot(pts_pred[1], pts_pred[0], label='pred')
         plt.legend()
 
 class AutoEncoder:
@@ -707,11 +711,12 @@ class RGAN:
         return self.GEN.predict(gen_in)[:, :, 0, 0]
 
 class SimpleLSTM:
-    def __init__(self, verbose=False):
+    def __init__(self, batch_seq_num, input_dim, output_dim, batch_size=32, verbose=False):
         self.verbose = verbose
-        self.batch_seq_num = 0
-        self.input_dim = 0
-        self.output_dim = 0
+        self.batch_seq_num = batch_seq_num
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.batch_size = batch_size
         self.net = None
         self.net_model = None
 
@@ -745,13 +750,8 @@ class SimpleLSTM:
         if self.verbose: self.net.summary()
         return self.net
 
-    def buildModel(self, batch_seq_num, input_dim, output_dim, batch_size=32):
+    def buildModel(self):
         if self.net_model: return self.net_model
-        self.batch_seq_num = batch_seq_num
-        self.input_dim = input_dim
-        self.output_dim = output_dim
-        self.batch_size = batch_size
-
         optimizer = RMSprop(lr=0.00002, decay=6e-8)
         self.net_model = Sequential()
         self.net_model.add(self.lstm())
@@ -763,12 +763,13 @@ class SimpleLSTM:
         v = 1 if self.verbose else 0
         ret = []
         for e in range(epochs):
-            for i in range(0, x.shape[0] - self.batch_size, self.batch_size):
+            for i in range(0, x.shape[0], self.batch_size):
                 met = self.net_model.train_on_batch(
                     x[i:i + self.batch_size], y[i:i + self.batch_size])
                 ret.append(met)
-        ret_avgs = np.mean(ret, axis=0)
-        return np.array(ret_avgs)
+        if len(ret) == 0: ret = np.zeros((2,))
+        else: ret = np.array(ret)
+        return np.mean(ret, axis=0)
 
     def predict(self, x):
         return self.net_model.predict(x)
@@ -801,8 +802,8 @@ if __name__ == "__main__":
     #                  for ns in range(batch_sz, p_ts.shape[0] - scan_ahead_step, batch_sz)])
     # # pscan = ls.projectScan(p_scans[0], p_cmds[0], p_ts[0])
 
-    # lstm = SimpleLSTM(verbose=False)
-    # lstm.buildModel(batch_sz, 7, 3, batch_size=32)
+    # lstm = SimpleLSTM(batch_sz, 7, 3, batch_size=32, verbose=False)
+    # lstm.buildModel()
 
     # idx = 0
     # lstm_x = np.concatenate((p_cmds, p_ts), axis=2)
