@@ -90,18 +90,29 @@ class LaserScans:
         self.cmd_vel = np.zeros((rand_scans_num, 6))
         self.ts = np.zeros((rand_scans_num, 1))
 
-    def projectScan(self, scan, cmdv, ts):
-        sb, cb, tb = scan, cmdv, np.zeros((cmdv.shape[0],))
+    def computeTransform(self, cmdv, ts):
+        cb, tb = cmdv, np.zeros((cmdv.shape[0],))
         for t in range(1, ts.shape[0]): tb[t] = ts[t] - ts[t - 1]
-        x, y, th = 0.0, -10.0, 0.0
-
+        x, y, th = 0.0, 0.0, 1.0
         for n in range(cmdv.shape[0]):
             rk_th = th + 0.5*cb[n, 5]*tb[n]  # runge-kutta integration
             x = x + cb[n, 0]*tb[n]*np.cos(rk_th)
             y = y + cb[n, 0]*tb[n]*np.sin(rk_th)
             th = th + cb[n, 5]*tb[n]
         cth, sth = np.cos(th), np.sin(th)
-        hm = np.array(((cth, -sth, x), (sth, cth, y), (0, 0, 1)))
+        return np.array(((cth, -sth, x), (sth, cth, y), (0, 0, 1))), x, y, th
+
+    def computeTransforms(self, cmdv, ts):
+        hm = np.empty((cmdv.shape[0], 9))
+        hp = np.empty((cmdv.shape[0], 3))
+        for i in range(cmdv.shape[0]):
+            h, x, y, t = self.computeTransform(cmdv[i], ts[i])
+            hm[i, :] = h.reshape((9,))
+            hp[i, :] = np.array([x, y, t])
+        return hm, hp
+
+    def projectScan(self, scan, cmdv, ts):
+        hm, _, _, _ = computeTransform(cmdv, ts)
 
         assert scan.shape[0] == self.scan_beam_num, "Wrong scan size"
         theta = self.scan_res*np.arange(-0.5*self.scan_beam_num, 0.5*self.scan_beam_num)
@@ -109,12 +120,7 @@ class LaserScans:
         pts[0] = scan*np.cos(theta)
         pts[1] = scan*np.sin(theta)
 
-        # plt.figure()
-        # plt.axis('equal')
-        # plt.plot(pts[1], pts[0], label='ref')
         pts = np.matmul(hm, pts)
-        # plt.plot(pts[1], pts[0], label='proj')
-        # plt.legend()
 
         x2 = pts[0]*pts[0]
         y2 = pts[1]*pts[1]
@@ -202,6 +208,31 @@ class LaserScans:
             else:
                 col = '#1f77b4'
                 plt.plot(theta[s[0]:s[1]], scan[s[0]:s[1]], 'o', markersize=0.5, color=col)
+    def plotProjection(self, scan, hparams, params):
+        assert scan.shape[0] == self.scan_beam_num, "Wrong scan size"
+        theta = self.scan_res*np.arange(-0.5*self.scan_beam_num, 0.5*self.scan_beam_num)
+        pts = np.ones((3, self.scan_beam_num))
+        pts[0] = scan*np.cos(theta)
+        pts[1] = scan*np.sin(theta)
+
+        plt.figure()
+        plt.axis('equal')
+        plt.plot(pts[1], pts[0], label='ref')
+
+        x, y, th = hparams[0], hparams[1], hparams[2]
+        cth, sth = np.cos(th), np.sin(th)
+        hm = np.array(((cth, -sth, x), (sth, cth, y), (0, 0, 1)))
+
+        pts_proj = np.matmul(hm, pts)
+        plt.plot(pts_proj[1], pts_proj[0], label='proj')
+
+        x, y, th = params[0], params[1], params[2]
+        cth, sth = np.cos(th), np.sin(th)
+        hm = np.array(((cth, -sth, x), (sth, cth, y), (0, 0, 1)))
+
+        pts_pred = np.matmul(hm, pts)
+        plt.plot(pts_pred[1], pts_pred[0], label='pred')
+        plt.legend()
 
 class AutoEncoder:
     def __init__(self, original_dim,
@@ -294,7 +325,8 @@ class AutoEncoder:
         else:
             vae_out = self.decoder(self.encoder(e_in))
             self.ae = Model(e_in, vae_out, name='autoencoder')
-            self.ae.compile(optimizer='adadelta', loss='binary_crossentropy', metrics=['accuracy'])
+            self.ae.compile(optimizer='adadelta',
+                            loss='binary_crossentropy', metrics=['accuracy'])
         if self.verbose: self.ae.summary()
         return self.ae
 
@@ -667,11 +699,79 @@ class RGAN:
         return self.original_dim
 
     def generate(self, x):
-        noise = np.random.uniform(-1.0, 1.0, size=[x.shape[0], self.input_length_dim, self.latent_input_dim])
+        noise = np.random.uniform(-1.0, 1.0, size=[x.shape[0],
+                                                   self.input_length_dim, self.latent_input_dim])
         gen_in = np.empty((x.shape[0], self.input_length_dim, 2*self.latent_input_dim))
         gen_in[:, :, ::2] = x
         gen_in[:, :, 1::2] = noise
         return self.GEN.predict(gen_in)[:, :, 0, 0]
+
+class SimpleLSTM:
+    def __init__(self, verbose=False):
+        self.verbose = verbose
+        self.batch_seq_num = 0
+        self.input_dim = 0
+        self.output_dim = 0
+        self.net = None
+        self.net_model = None
+
+    def lstm(self):
+        if self.net: return self.net
+        dropout = 0.4
+        depth = 64+64
+
+        self.net = Sequential()
+        self.net.add(LSTM(depth, input_shape=(self.batch_seq_num, self.input_dim),
+                        return_sequences=True, activation='tanh',
+                          recurrent_activation='hard_sigmoid'))
+        self.net.add(LSTM(int(0.5*depth), return_sequences=True,
+                        activation='tanh', recurrent_activation='hard_sigmoid'))
+
+        self.net.add(Dense(depth))
+        self.net.add(BatchNormalization(momentum=0.9))
+        self.net.add(Activation('relu'))
+        self.net.add(Reshape((self.batch_seq_num, 32, int(depth/32))))
+
+        self.net.add(Conv2D(int(0.25*depth), 5, strides=2, padding='same'))
+        self.net.add(Activation('relu'))
+        self.net.add(Conv2D(int(0.125*depth), 5, strides=2, padding='same'))
+        self.net.add(Activation('relu'))
+        self.net.add(Dropout(dropout))
+
+        self.net.add(Flatten())
+        self.net.add(Dense(self.output_dim))
+        self.net.add(Activation('sigmoid'))
+
+        if self.verbose: self.net.summary()
+        return self.net
+
+    def buildModel(self, batch_seq_num, input_dim, output_dim, batch_size=32):
+        if self.net_model: return self.net_model
+        self.batch_seq_num = batch_seq_num
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.batch_size = batch_size
+
+        optimizer = RMSprop(lr=0.00002, decay=6e-8)
+        self.net_model = Sequential()
+        self.net_model.add(self.lstm())
+        self.net_model.compile(loss='binary_crossentropy',
+                               optimizer=optimizer, metrics=['accuracy'])
+        return self.net_model
+
+    def fitModel(self, x, y, epochs=10, x_test=None, y_test=None):
+        v = 1 if self.verbose else 0
+        ret = []
+        for e in range(epochs):
+            for i in range(0, x.shape[0] - self.batch_size, self.batch_size):
+                met = self.net_model.train_on_batch(
+                    x[i:i + self.batch_size], y[i:i + self.batch_size])
+                ret.append(met)
+        ret_avgs = np.mean(ret, axis=0)
+        return np.array(ret_avgs)
+
+    def predict(self, x):
+        return self.net_model.predict(x)
 
 if __name__ == "__main__":
     # params
@@ -679,18 +779,18 @@ if __name__ == "__main__":
     gan_batch_sz = 32
     scan_idx = 1000 # 1000
     to_show_idx = 10
-    scan_ahead_step = 5
+    scan_ahead_step = 8
 
     # DIAG_first_floor.txt
     # diag_labrococo.txt
     # diag_underground.txt
     ls = LaserScans(verbose=True)
-    ls.load("../../dataset/diag_underground.txt",
+    ls.load("../../dataset/diag_labrococo.txt",
             scan_res=0.00653590704, scan_fov=(3/2)*np.pi,
-            scan_beam_num=512, clip_scans_at=8, scan_offset=6)
+            scan_beam_num=512, clip_scans_at=8, scan_offset=8)
 
-    # p_scan_num = 1000
-    # ls.plotScan(ls.getScans()[p_scan_num])
+    # p_scan_num = 1500
+    # # ls.plotScan(ls.getScans()[p_scan_num])
     # p_scans = ls.getScans()[scan_idx:scan_idx + p_scan_num]
     # p_cmds = ls.cmdVel()[scan_idx:scan_idx + p_scan_num]
     # p_ts = ls.timesteps()[scan_idx:scan_idx + p_scan_num]
@@ -699,7 +799,27 @@ if __name__ == "__main__":
     #                    for ns in range(batch_sz, p_cmds.shape[0] - scan_ahead_step, batch_sz)])
     # p_ts = np.array([p_ts[ns:ns + scan_ahead_step] \
     #                  for ns in range(batch_sz, p_ts.shape[0] - scan_ahead_step, batch_sz)])
-    # pscan = ls.projectScan(p_scans[0], p_cmds[0], p_ts[0])
+    # # pscan = ls.projectScan(p_scans[0], p_cmds[0], p_ts[0])
+
+    # lstm = SimpleLSTM(verbose=False)
+    # lstm.buildModel(batch_sz, 7, 3, batch_size=32)
+
+    # idx = 0
+    # lstm_x = np.concatenate((p_cmds, p_ts), axis=2)
+    # hms, lstm_y = ls.computeTransforms(p_cmds, p_ts)
+
+    # metrics = lstm.fitModel(lstm_x, lstm_y, epochs=40)
+    # print("metrics lstm: [loss acc]", metrics)
+    # y = lstm.predict(lstm_x)
+    # ls.plotProjection(p_scans[100], lstm_y[100], y[100])
+
+    # metrics = lstm.fitModel(lstm_x, lstm_y, epochs=40)
+    # metrics = lstm.fitModel(lstm_x, lstm_y, epochs=40)
+    # metrics = lstm.fitModel(lstm_x, lstm_y, epochs=40)
+    # print("metrics lstm: [loss acc]", metrics)
+    # y = lstm.predict(lstm_x)
+    # # ls.plotProjection(p_scans[100], lstm_y[100], y[100])
+    # plt.show()
 
     ae = AutoEncoder(ls.originalScansDim(),
                      variational=True, convolutional=False,
@@ -730,7 +850,7 @@ if __name__ == "__main__":
     gan = RGAN()
     gan.buildModel((ls.originalScansDim(), 1, 1,), 16, batch_sz)
 
-    conc = int(8192/4)
+    conc = int(8192/32)
     latent = ae.encode(x[:conc])
     in_latent = np.concatenate((latent, ls.cmdVel()[:conc]), axis=1)
     in_latent = np.reshape(in_latent,
