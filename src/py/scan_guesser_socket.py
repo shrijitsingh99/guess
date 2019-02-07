@@ -60,20 +60,21 @@ if __name__ == "__main__":
     print("| ----------------------------- |")
     print("| -- ScanGuesser test-socket -- |")
     print("| ----------------------------- |\n")
+    skt_pkg_scaling = 1000
     scan_ahead_step = 10
     scan_seq_batch = 8
     scan_length = 512
-    clip_scans_at = 5
+    clip_scans_at = 5.0
     add_scan = 0 # number of pkg receive to update
     guesser = ScanGuesser(scan_length, # original_scan_dim
                           net_model="lstm",  # default; thin; lstm
                           scan_batch_sz=scan_seq_batch,  # sequence of scans as input
-                          gen_scan_ahead_step=scan_ahead_step,  # \# of 'scansteps' to look ahead
+                          gen_step_ahead=scan_ahead_step,  # \# of 'scansteps' to look ahead
                           clip_scans_at=clip_scans_at,  # max beam length [m]
                           scan_res=0.0085915, scan_fov=4.398848,#(3/2)*np.pi,
-                          ae_epochs=30,
+                          ae_epochs=50,
                           ae_variational=True, ae_convolutional=False,
-                          gan_batch_sz=8, gan_train_steps=15, start_update_thr=True)
+                          gan_batch_sz=16, gan_train_steps=15, start_update_thr=True)
 
     guesser.init(None, init_models=True, init_scan_batch_num=1)
 
@@ -91,7 +92,7 @@ if __name__ == "__main__":
     i = 0
     while i < 10:
         i = i + 0
-        try: data_batch_srz = receiver.getData()*0.0001
+        try: data_batch_srz = receiver.getData()*(1.0/skt_pkg_scaling)
         except Exception as e:
             print("Error", str(e))
             continue
@@ -103,7 +104,7 @@ if __name__ == "__main__":
         ts_batch = cmdv_batch[:, -1]
         cmdv_batch = cmdv_batch[:, :-1]
 
-        if add_scan + 1 == scan_seq_batch:
+        if add_scan + 1 == 2 or True:
             guesser.addRawScans(scan_batch, cmdv_batch, ts_batch)
             add_scan = 0
         else: add_scan = add_scan + 1
@@ -112,5 +113,5 @@ if __name__ == "__main__":
             gscan, vscan, hp = guesser.generateRawScan(scan_batch, cmdv_batch, ts_batch)
             to_send = np.concatenate((gscan, vscan[-1]))
             to_send = np.concatenate((to_send, hp))
-            provider.send((to_send*10000).astype(np.int16))
+            provider.send((to_send*skt_pkg_scaling).astype(np.int16))
         except Exception as e: print("Message not sent. ", str(e))

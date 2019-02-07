@@ -81,26 +81,27 @@ class LaserScans:
 
         if not self.clip_scans_at is None:
             np.clip(self.scans, a_min=0, a_max=self.clip_scans_at, out=self.scans)
-        self.scans = self.scans / self.clip_scans_at    # normalization makes the vae work
+            self.scans = self.scans / self.clip_scans_at    # normalization makes the vae work
 
     def initRand(self, rand_scans_num, scan_dim, scan_res, scan_fov, clip_scans_at=5.0):
         self.scan_beam_num = scan_dim
         self.scan_res = scan_res
         self.scan_fov = scan_fov
         self.clip_scans_at = clip_scans_at
-        self.scans = np.random.uniform(0.0, 1.0, size=[rand_scans_num, scan_dim])
+        self.scans = np.random.uniform(0, 1.0, size=[rand_scans_num, scan_dim])
         self.cmd_vel = np.zeros((rand_scans_num, 6))
         self.ts = np.zeros((rand_scans_num, 1))
 
     def computeTransform(self, cmdv, ts):
         cb, tb = cmdv, np.zeros((cmdv.shape[0],))
         for t in range(1, ts.shape[0]): tb[t] = ts[t] - ts[t - 1]
-        x, y, th = 0.0, 0.0, 1.0
+        tstep = np.mean(tb)
+        x, y, th = 0.0, 0.0, 0.0
         for n in range(cmdv.shape[0]):
-            rk_th = th + 0.5*cb[n, 5]*tb[n]  # runge-kutta integration
-            x = x + cb[n, 0]*tb[n]*np.cos(rk_th)
-            y = y + cb[n, 0]*tb[n]*np.sin(rk_th)
-            th = th + cb[n, 5]*tb[n]
+            rk_th = th + 0.5*cb[n, 5]*tstep  # runge-kutta integration
+            x = x + cb[n, 0]*np.cos(rk_th)*tstep
+            y = y + cb[n, 0]*np.sin(rk_th)*tstep
+            th = th + cb[n, 5]*tstep
         cth, sth = np.cos(th), np.sin(th)
         return np.array(((cth, -sth, x), (sth, cth, y), (0, 0, 1))), x, y, th
 
@@ -727,25 +728,28 @@ class SimpleLSTM:
 
         self.net = Sequential()
         self.net.add(LSTM(depth, input_shape=(self.batch_seq_num, self.input_dim),
-                        return_sequences=True, activation='tanh',
+                          return_sequences=True, activation='tanh',
                           recurrent_activation='hard_sigmoid'))
         self.net.add(LSTM(int(0.5*depth), return_sequences=True,
-                        activation='tanh', recurrent_activation='hard_sigmoid'))
+                          activation='tanh', recurrent_activation='hard_sigmoid'))
 
         self.net.add(Dense(depth))
         self.net.add(BatchNormalization(momentum=0.9))
         self.net.add(Activation('relu'))
         self.net.add(Reshape((self.batch_seq_num, 32, int(depth/32))))
 
-        self.net.add(Conv2D(int(0.25*depth), 5, strides=2, padding='same'))
-        self.net.add(Activation('relu'))
-        self.net.add(Conv2D(int(0.125*depth), 5, strides=2, padding='same'))
-        self.net.add(Activation('relu'))
-        self.net.add(Dropout(dropout))
+        self.net.add(Dense(self.output_dim*4))
+
+        # self.net.add(Conv2D(int(0.25*depth), 5, strides=2, padding='same'))
+        # self.net.add(Activation('relu'))
+        # self.net.add(Conv2D(int(0.125*depth), 5, strides=2, padding='same'))
+        # self.net.add(Activation('relu'))
+        # self.net.add(Dropout(dropout))
 
         self.net.add(Flatten())
         self.net.add(Dense(self.output_dim))
         self.net.add(Activation('sigmoid'))
+        self.net.add(Activation('linear'))
 
         if self.verbose: self.net.summary()
         return self.net
