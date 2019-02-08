@@ -133,7 +133,10 @@ class ScanGuesser:
                 next_ts[int(ns/self.scan_batch_sz) - 1, :, :] = ts[ns:ns + self.gen_step_ahead]
 
             _, hp = self.ls.computeTransforms(next_cmdv, next_ts)
-            print("rm:: hp", hp)
+            hp[:,:2] += 0.5  # maximum is 1m, normalize in [0,1]
+            for th in range(hp.shape[0]):
+                if hp[th, 2] < 0.0: hp[th, 2] = 2*np.pi + hp[th, 2]
+            hp[:, 2] = hp[:, 2]/(2*np.pi)
         if not next_scan is None and x_latent.shape[0] != next_scan.shape[0]:
             x_latent = x_latent[:next_scan.shape[0], :, :]
         return x_latent, next_scan, pparams, hp
@@ -252,6 +255,8 @@ class ScanGuesser:
         cmd_vel = cmd_vel.reshape((1, cmd_vel.shape[0], cmd_vel.shape[1],))
         pparams = np.concatenate((cmd_vel, ts), axis=2)
         hp = self.projector.predict(pparams)
+        hp[:,:2] -= 0.5  # maximum is 1m, normalize in [0,1]
+        hp[:, 2] = hp[:, 2]*2*np.pi
 
         if self.verbose: print("Prediction in", timer.elapsed_time())
         return gen[0], self.decodeScan(latent), hp[0]

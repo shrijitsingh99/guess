@@ -95,7 +95,7 @@ class LaserScans:
     def computeTransform(self, cmdv, ts):
         cb, tb = cmdv, np.zeros((cmdv.shape[0],))
         for t in range(1, ts.shape[0]): tb[t] = ts[t] - ts[t - 1]
-        tstep = np.mean(tb)
+        tstep = max(0.1, np.mean(tb))
         x, y, th = 0.0, 0.0, 0.0
         for n in range(cmdv.shape[0]):
             rk_th = th + 0.5*cb[n, 5]*tstep  # runge-kutta integration
@@ -749,7 +749,6 @@ class SimpleLSTM:
         self.net.add(Flatten())
         self.net.add(Dense(self.output_dim))
         self.net.add(Activation('sigmoid'))
-        self.net.add(Activation('linear'))
 
         if self.verbose: self.net.summary()
         return self.net

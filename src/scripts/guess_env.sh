@@ -1,7 +1,7 @@
 #! /bin/bash
 
 GUESS_ROOT=/home/sapienzbot/ws/guess
-rcfg=${GUESS_ROOT}/rviz/stage_guess.config.rviz
+rcfg=${GUESS_ROOT}/config/rviz/stage_guess.config.rviz
 map_file=${GUESS_ROOT}/config/world/diag_floor_b1
 # urdf_file=${GUESS_ROOT}/config/ros/urdf/
 

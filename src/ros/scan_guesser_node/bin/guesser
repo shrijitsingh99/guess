@@ -4,9 +4,6 @@
 import numpy as np
 from threading import Thread, Lock
 
-#import roslib
-# roslib.load_manifest('guesser')
-
 import rospy
 import tf
 from geometry_msgs.msg import Twist
@@ -90,7 +87,7 @@ class ScanGuesserNode:
 
             sg_data = self.receiver.getData()*(1.0/self.skt_pkg_scaling)
             sg_tf = sg_data[-3:]
-            # print "rm:: transform", sg_tf
+            print "rm:: transform", sg_tf
             sg_data = sg_data[:-3].reshape((2, self.scan_beam_num))
 
             self.br.sendTransform((sg_tf[0], sg_tf[1], 0),
