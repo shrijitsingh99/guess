@@ -1,58 +1,64 @@
 <launch>
-  <arg name="mapfile" default="$(find stage_ros)/world/willow-full.yaml" />
-  <arg name="worldfile" default="$(find stage_ros)/world/willow-erratic.world" />
-  <arg name="urdffile" default="" />
-  <arg name="rviz_cfg" default="$(find navigation_stage)/single_robot.rviz" />
-  <arg name="initial_pose_x" default="5.5" />
-  <arg name="initial_pose_y" default="1.75" />
-  <arg name="initial_pose_a" default="0.0" />
+  <arg name="mapfile" default="$(find stage_ros)/world/willow-full.yaml"/>
+  <arg name="worldfile" default="$(find stage_ros)/world/willow-erratic.world"/>
+  <arg name="urdffile" default=""/>
+  <arg name="rviz_cfg" default="$(find navigation_stage)/single_robot.rviz"/>
+  <arg name="initial_pose_x" default="5.5"/>
+  <arg name="initial_pose_y" default="1.75"/>
+  <arg name="initial_pose_a" default="0.0"/>
 
   <arg name="odom_frame_id"   default="odom"/>
   <arg name="base_frame_id"   default="base_footprint"/>
   <arg name="global_frame_id" default="map"/>
 
-  <arg name="odom_topic" default="odom" />
-  <arg name="scan_topic" default="scan" />
-  <arg name="cmd_vel_topic" default="cmd_vel" />
+  <arg name="odom_topic" default="odom"/>
+  <arg name="scan_topic" default="scan"/>
+  <arg name="cmd_vel_topic" default="cmd_vel"/>
 
   <param name="/use_sim_time" value="true"/>
   
   <node pkg="move_base" type="move_base" respawn="false" name="move_base_node" output="screen">
-    <!-- <remap from="map" to="/map" /> -->
+    <!-- <remap from="map" to="/map"/> -->
     <remap from="base_scan" to="$(arg scan_topic)"/>
     <remap from="cmd_vel" to="$(arg cmd_vel_topic)"/>
     <remap from="odom" to="$(arg odom_topic)"/>
     
-    <param name="footprint_padding" value="0.01" />
-    <param name="controller_frequency" value="10.0" />
-    <param name="controller_patience" value="3.0" />
-    <param name="oscillation_timeout" value="30.0" />
-    <param name="oscillation_distance" value="0.5" />
-    <param name="base_local_planner" value="dwa_local_planner/DWAPlannerROS" />
-    <rosparam file="$(find navigation_stage)/move_base_config/costmap_common_params.yaml" command="load" ns="global_costmap" />
-    <rosparam file="$(find navigation_stage)/move_base_config/costmap_common_params.yaml" command="load" ns="local_costmap" />
-    <rosparam file="$(find navigation_stage)/move_base_config/local_costmap_params.yaml" command="load" />
-    <rosparam file="$(find navigation_stage)/move_base_config/global_costmap_params.yaml" command="load" />
-    <rosparam file="$(find navigation_stage)/move_base_config/base_local_planner_params.yaml" command="load" />
-    <rosparam file="$(find navigation_stage)/move_base_config/dwa_local_planner_params.yaml" command="load" />
+    <param name="footprint_padding" value="0.01"/>
+    <param name="controller_frequency" value="10.0"/>
+    <param name="controller_patience" value="3.0"/>
+    <param name="oscillation_timeout" value="30.0"/>
+    <param name="oscillation_distance" value="0.5"/>
+    <param name="base_local_planner" value="dwa_local_planner/DWAPlannerROS"/>
+    <rosparam file="$(find navigation_stage)/move_base_config/costmap_common_params.yaml"
+              command="load" ns="global_costmap"/>
+    <rosparam file="$(find navigation_stage)/move_base_config/costmap_common_params.yaml"
+              command="load" ns="local_costmap"/>
+    <rosparam file="$(find navigation_stage)/move_base_config/local_costmap_params.yaml"
+              command="load"/>
+    <rosparam file="$(find navigation_stage)/move_base_config/global_costmap_params.yaml"
+              command="load"/>
+    <rosparam file="$(find navigation_stage)/move_base_config/base_local_planner_params.yaml"
+              command="load"/>
+    <rosparam file="$(find navigation_stage)/move_base_config/dwa_local_planner_params.yaml"
+              command="load"/>
   </node>
 
   <node pkg="map_server" name="map_server" type="map_server" args="$(arg mapfile)">
-    <param name="frame_id" value="$(arg global_frame_id)" />
+    <param name="frame_id" value="$(arg global_frame_id)"/>
   </node>
 
   <node pkg="stage_ros" name="stageros" type="stageros" args="-g $(arg worldfile)">
-    <remap from="base_scan" to="$(arg scan_topic)" />
-    <remap from="cmd_vel" to="$(arg cmd_vel_topic)" />
+    <remap from="base_scan" to="$(arg scan_topic)"/>
+    <remap from="cmd_vel" to="$(arg cmd_vel_topic)"/>
     <param name="base_watchdog_timeout" value="0.2"/>
   </node>
 
   <node pkg="amcl" type="amcl" name="amcl" respawn="true">
-    <remap from="scan" to="$(arg scan_topic)" />
-    <param name="use_map_topic" value="true" />
+    <remap from="scan" to="$(arg scan_topic)"/>
+    <param name="use_map_topic" value="true"/>
     <param name="odom_model_type" value="omni"/>
     <param name="odom_alpha5" value="0.1"/>
-    <param name="transform_tolerance" value="0.2" />
+    <param name="transform_tolerance" value="0.2"/>
     <param name="gui_publish_rate" value="10.0"/>
     <param name="laser_max_beams" value="30"/>
     <param name="min_particles" value="500"/>
@@ -79,12 +85,12 @@
     <param name="transform_tolerance" value="0.1"/>
     <param name="recovery_alpha_slow" value="0.0"/>
     <param name="recovery_alpha_fast" value="0.0"/>
-    <param name="initial_pose_x" value="$(arg initial_pose_x)" />
-    <param name="initial_pose_y" value="$(arg initial_pose_y)" />
-    <param name="initial_pose_a" value="$(arg initial_pose_a)" />
-    <param name="initial_cov_xx" value="0.5" />
-    <param name="initial_cov_yy" value="0.5" />
-    <param name="initial_cov_aa" value="0.1" />
+    <param name="initial_pose_x" value="$(arg initial_pose_x)"/>
+    <param name="initial_pose_y" value="$(arg initial_pose_y)"/>
+    <param name="initial_pose_a" value="$(arg initial_pose_a)"/>
+    <param name="initial_cov_xx" value="0.5"/>
+    <param name="initial_cov_yy" value="0.5"/>
+    <param name="initial_cov_aa" value="0.1"/>
   </node>
 
     <node pkg="turtlebot_teleop" type="turtlebot_teleop_joy" name="turtlebot_teleop_joystick">
@@ -94,6 +100,6 @@
   </node>
   <node pkg="joy" type="joy_node" name="joystick"/>
 
-  <node name="rviz" pkg="rviz" type="rviz" args="-d $(arg rviz_cfg)" />
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(arg rviz_cfg)"/>
 
 </launch>
