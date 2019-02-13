@@ -59,11 +59,10 @@ class TopologicalNavigationNode:
     def poseCb(self, data):
         self.mtx.acquire()
         r_pos = np.array([data.pose.pose.position.x, data.pose.pose.position.y])
-        self.closest_node_idx = -1
         self.mtx.release()
 
-        nidx = 0
         if not self.nodes is None:
+            nidx = 0
             min_idx = 0
             for n in range(1, self.nodes.shape[0]):
                 if abs(np.sum(np.linalg.norm(self.nodes[n] - r_pos))) < \
@@ -77,6 +76,15 @@ class TopologicalNavigationNode:
             marker_array.markers.append(m0)
             marker_array.markers.append(m1)
             self.topo_nav_nodes_pub.publish(marker_array)
+
+            movebase_goal = PoseStamped()
+            movebase_goal.header.frame_id = '/map'
+            movebase_goal.header.stamp = rospy.Time.now()
+            movebase_goal.pose.position.x = self.nodes[nidx, 0]
+            movebase_goal.pose.position.y = self.nodes[nidx, 1]
+            movebase_goal.pose.orientation.w = 1.0
+            print "-- Movebase goal sent", self.nodes[nidx, 0], self.nodes[nidx, 1]
+            self.movebase_goal_pub.publish(movebase_goal)
 
     def mapCb(self, data):
         print "-- Map received"
