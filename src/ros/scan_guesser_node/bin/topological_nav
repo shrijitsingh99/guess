@@ -1,0 +1,142 @@
+#! /usr/bin/env python
+# coding: utf-8
+
+import numpy as np
+import random
+import matplotlib.pyplot as plt
+import cv2 as cv
+from threading import Thread, Lock
+
+import rospy
+import tf
+from nav_msgs.msg import OccupancyGrid
+from geometry_msgs.msg import Vector3, Pose, PoseWithCovarianceStamped, PoseStamped
+from visualization_msgs.msg import Marker, MarkerArray
+# from move_base_msgs.msg import MoveBaseGoal
+import scan_guesser_node.guesser_utils as sgu
+
+class TopologicalNavigationNode:
+    def __init__(self):
+        map_topic = rospy.get_param('~map_topic', '/map')
+        pose_topic = rospy.get_param('~pose_topic', '/amcl_pose')
+        movebase_goal_topic = rospy.get_param('~movebase_goal', '/move_base_simple/goal')
+        topo_nodes = rospy.get_param('~topo_nodes_topic', '/topo_nodes')
+        topo_nav_nodes = rospy.get_param('~topo_nav_topic', '/topo_nav_nodes')
+
+        self.topo_nodes_pub = rospy.Publisher(topo_nodes, MarkerArray, queue_size=10)
+        self.topo_nav_nodes_pub = rospy.Publisher(topo_nav_nodes, MarkerArray, queue_size=10)
+        self.movebase_goal_pub = rospy.Publisher(movebase_goal_topic, PoseStamped, queue_size=10)
+        self.pose_sub = rospy.Subscriber(pose_topic, PoseWithCovarianceStamped, self.poseCb)
+        self.map_sub = rospy.Subscriber(map_topic, OccupancyGrid, self.mapCb)
+        self.closest_node_idx = -1
+        self.topo_nodes_generated = False
+        self.nodes = None
+
+        self.mtx = Lock()
+
+    def __makeMarker(self, mid, x, y, mtype=Marker.SPHERE, scale=Vector3(0.5, 0.5, 0.5),
+                     r_ch=0.17647058823, g_ch=0.5294117647, b_ch=0.80392156862):
+        # make a visualization marker array for the occupancy grid
+        m = Marker()
+        m.action = Marker.ADD
+        m.header.frame_id = '/map'
+        m.header.stamp = rospy.Time.now()
+        m.ns = 'marker_test_%d' % mtype
+        m.id = mid
+        m.type = mtype
+        m.scale = scale
+        m.pose.orientation.y = 0
+        m.pose.orientation.w = 1
+        m.pose.position.x = x
+        m.pose.position.y = y
+        m.pose.position.z = 0.1
+        m.color.r = r_ch;
+        m.color.g = g_ch;
+        m.color.b = b_ch;
+        m.color.a = 0.8;
+        return m
+
+    def poseCb(self, data):
+        self.mtx.acquire()
+        # print data.pose.pose.position.x, data.pose.pose.position.y, data.pose.pose.orientation.z
+        self.closest_node_idx = -1
+        self.mtx.release()
+
+        nidx = 0
+        if not self.nodes is None:
+            min_idx = 0
+            for n in range(1, self.nodes.shape[0]):
+                ref_pos = np.array([10, 10])
+                if abs(np.sum(np.linalg.norm(self.nodes[n] - ref_pos))) < \
+                   abs(np.sum(np.linalg.norm(self.nodes[min_idx] - ref_pos))):
+                    min_idx = n
+            nidx = random.randint(0, self.nodes.shape[0] - 1)
+            marker_array = MarkerArray()
+            m0 = self.__makeMarker(0, self.nodes[nidx, 0], self.nodes[nidx, 1],
+                                   scale=Vector3(0.8, 0.8, 0.8), r_ch=0.23529411764, g_ch=0.70196078431, b_ch=0.4431372549)
+            m1 = self.__makeMarker(1, self.nodes[min_idx, 0], self.nodes[min_idx, 1],
+                                   scale=Vector3(0.8, 0.8, 0.8), r_ch=0.86274509803, g_ch=0.07843137254, b_ch=0.23529411764)
+            marker_array.markers.append(m0)
+            marker_array.markers.append(m1)
+            self.topo_nav_nodes_pub.publish(marker_array)
+
+    def mapCb(self, data):
+        print "-- Map received"
+        img_w, img_h = data.info.width, data.info.height
+        ref = np.zeros((img_h, img_w), dtype=np.uint8)
+
+        for i in range(0, img_h):
+            for j in range(0, img_w):
+                point_val = data.data[(img_h - 1 - i)*img_w + j]
+                if point_val == -1: ref[i, j] = 0
+                elif point_val == 0: ref[i, j] = 255
+                elif point_val == 100: ref[i, j] = 0
+
+        blurr_scaling = 85
+        bl = cv.GaussianBlur(ref, (blurr_scaling, blurr_scaling), -1, 0)
+
+        sobelx = np.absolute(cv.Sobel(bl, cv.CV_16S, 1, 0, ksize=3))
+        sobely = np.absolute(cv.Sobel(bl, cv.CV_16S, 0, 1, ksize=3))
+        potential = sobelx + sobely
+        potential = potential.astype(np.float32)/np.max(potential)
+        potential[(ref == 0) | (potential > 0.3)] = 1.0
+
+        print "-- Potetial field generated"
+        nodes = []
+        for i in range(potential.shape[0]):
+            for j in range(potential.shape[1]):
+                if potential[i, j] < 0.0001:
+                    found = False
+                    for n in range(len(nodes)):
+                        if abs(np.sum(np.linalg.norm(nodes[n] - np.array([i, j])))) < 50: # 50
+                            found = True
+                            break
+                    if not found:
+                        nodes.append([i, j])
+        print "-- Added #" + str(len(nodes)), "navigation nodes"
+        self.nodes = np.array(nodes).astype(np.float32)
+
+        marker_array = MarkerArray()
+        for n in range(self.nodes.shape[0]):
+            px = self.nodes[n, 1]*data.info.resolution + data.info.origin.position.x
+            py = (data.info.height - self.nodes[n, 0])*data.info.resolution + data.info.origin.position.y
+            self.nodes[n, 0] = px
+            self.nodes[n, 1] = py
+            m = self.__makeMarker(n, px, py)
+            marker_array.markers.append(m)
+
+        print "--", len(marker_array.markers), "nodes published"
+        self.topo_nodes_pub.publish(marker_array)
+        self.topo_nodes_generated = True
+
+    def run(self):
+        sgu.println("-- Spinning ROS node")
+        rospy.spin()
+
+if __name__ == '__main__':
+    sgu.println('-- Starting Topological Navigation ROS node')
+    rospy.init_node('topo_navigation')
+    try:
+        tnn = TopologicalNavigationNode()
+        tnn.run()
+    except rospy.ROSInterruptException: pass
