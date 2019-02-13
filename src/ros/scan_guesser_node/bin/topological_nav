@@ -58,7 +58,7 @@ class TopologicalNavigationNode:
 
     def poseCb(self, data):
         self.mtx.acquire()
-        # print data.pose.pose.position.x, data.pose.pose.position.y, data.pose.pose.orientation.z
+        r_pos = np.array([data.pose.pose.position.x, data.pose.pose.position.y])
         self.closest_node_idx = -1
         self.mtx.release()
 
@@ -66,10 +66,8 @@ class TopologicalNavigationNode:
         if not self.nodes is None:
             min_idx = 0
             for n in range(1, self.nodes.shape[0]):
-                ref_pos = np.array([10, 10])
-                if abs(np.sum(np.linalg.norm(self.nodes[n] - ref_pos))) < \
-                   abs(np.sum(np.linalg.norm(self.nodes[min_idx] - ref_pos))):
-                    min_idx = n
+                if abs(np.sum(np.linalg.norm(self.nodes[n] - r_pos))) < \
+                   abs(np.sum(np.linalg.norm(self.nodes[min_idx] - r_pos))): min_idx = n
             nidx = random.randint(0, self.nodes.shape[0] - 1)
             marker_array = MarkerArray()
             m0 = self.__makeMarker(0, self.nodes[nidx, 0], self.nodes[nidx, 1],
