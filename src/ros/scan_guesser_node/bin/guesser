@@ -19,7 +19,7 @@ class ScanGuesserNode:
         sv_scan_topic = rospy.get_param('~sv_scan_topic', '/sv_scan')
         self.base_tf = rospy.get_param('~base_tf', 'base_laser_link')
         self.gtf_name = rospy.get_param('~gtf_name', 'gen_tf')
-        self.scan_batch_sz = int(rospy.get_param('~scan_batch_sz', '8'))
+        self.scan_batch_sz = int(rospy.get_param('~scan_batch_sz', '16'))
         self.scan_beam_num = int(rospy.get_param('~scan_beam_num', '512'))
         self.br = tf.TransformBroadcaster()
 
@@ -87,7 +87,7 @@ class ScanGuesserNode:
 
             sg_data = self.receiver.getData()*(1.0/self.skt_pkg_scaling)
             sg_tf = sg_data[-3:]
-            print "rm:: transform", sg_tf
+            # print "rm:: transform", sg_tf
             sg_data = sg_data[:-3].reshape((2, self.scan_beam_num))
 
             self.br.sendTransform((sg_tf[0], sg_tf[1], 0),

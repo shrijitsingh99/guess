@@ -83,7 +83,7 @@ class ScanGuesser:
             self.gan_latent_dim = (6 + self.ae_latent_dim)
             self.gan = RGAN(verbose=self.verbose)
             self.gan.buildModel((self.original_scan_dim, 1, 1,),
-                                self.gan_latent_dim, self.scan_batch_sz)
+                                self.gan_latent_dim, self.scan_batch_sz, thin_model=True)
         else:
             self.gan_latent_dim = (6 + self.ae_latent_dim)*scan_batch_sz
             self.gan = GAN(verbose=self.verbose)
@@ -150,10 +150,10 @@ class ScanGuesser:
         latent = self.encodeScan(scans)
         x_latent, next_scan, pp, hp = self.__reshapeGanInput(scans, cmd_vel, ts, latent)
         p_metrics =  self.projector.fitModel(pp, hp, epochs=40)
-        # g_metrics = self.gan.fitModel(x_latent, next_scan,
-        #                               train_steps=self.gan_train_steps,
-        #                               batch_sz=self.gan_batch_sz, verbose=verbose)[-1]
-        g_metrics = np.zeros((4,))
+        # g_metrics = np.zeros((4,))
+        g_metrics = self.gan.fitModel(x_latent, next_scan,
+                                      train_steps=self.gan_train_steps,
+                                      batch_sz=self.gan_batch_sz, verbose=verbose)[-1]
         return np.concatenate((p_metrics, g_metrics))
 
     def __fitModel(self, scans, cmd_vel, ts, verbose=False):

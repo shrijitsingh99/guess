@@ -586,9 +586,10 @@ class RGAN:
         self.D.add(LeakyReLU(alpha=0.2))
         self.D.add(Dropout(dropout))
 
-        self.D.add(Conv2D(depth*4, 5, strides=2, padding='same'))
-        self.D.add(LeakyReLU(alpha=0.2))
-        self.D.add(Dropout(dropout))
+        if not self.thin_model:
+            self.D.add(Conv2D(depth*4, 5, strides=2, padding='same'))
+            self.D.add(LeakyReLU(alpha=0.2))
+            self.D.add(Dropout(dropout))
 
         self.D.add(Conv2D(depth*8, 5, strides=1, padding='same'))
         self.D.add(LeakyReLU(alpha=0.2))
@@ -612,25 +613,32 @@ class RGAN:
                         activation='tanh', recurrent_activation='hard_sigmoid'))
         self.G.add(LSTM(depth, return_sequences=True,
                         activation='tanh', recurrent_activation='hard_sigmoid'))
-        self.G.add(Dense(dim*depth))
-        self.G.add(BatchNormalization(momentum=0.9))
-        self.G.add(Activation('relu'))
-        self.G.add(Reshape((dim, 1, self.input_length_dim*depth)))
-        self.G.add(Dropout(dropout))
 
-        self.G.add(UpSampling2D(size=(2, 1)))
-        self.G.add(Conv2DTranspose(int(depth/4), 5, padding='same'))
-        self.G.add(BatchNormalization(momentum=0.9))
-        self.G.add(Activation('relu'))
+        if self.thin_model:
+            self.G.add(Flatten())
+            self.G.add(Dense(self.input_shape[0]))
+            self.G.add(Reshape((self.input_shape[0], 1, 1)))
+            self.G.add(Activation('sigmoid'))
+        else:
+            self.G.add(Dense(dim*depth))
+            self.G.add(BatchNormalization(momentum=0.9))
+            self.G.add(Activation('relu'))
+            self.G.add(Reshape((dim, 1, self.input_length_dim*depth)))
+            self.G.add(Dropout(dropout))
 
-        self.G.add(UpSampling2D(size=(4, 1)))
-        self.G.add(Conv2DTranspose(int(depth/8), 5, padding='same'))
-        self.G.add(BatchNormalization(momentum=0.9))
-        self.G.add(Activation('relu'))
+            self.G.add(UpSampling2D(size=(2, 1)))
+            self.G.add(Conv2DTranspose(int(depth/4), 5, padding='same'))
+            self.G.add(BatchNormalization(momentum=0.9))
+            self.G.add(Activation('relu'))
 
-        self.G.add(UpSampling2D(size=(4, 1)))
-        self.G.add(Conv2DTranspose(1, 5, padding='same'))
-        self.G.add(Activation('sigmoid'))
+            self.G.add(UpSampling2D(size=(4, 1)))
+            self.G.add(Conv2DTranspose(int(depth/8), 5, padding='same'))
+            self.G.add(BatchNormalization(momentum=0.9))
+            self.G.add(Activation('relu'))
+
+            self.G.add(UpSampling2D(size=(4, 1)))
+            self.G.add(Conv2DTranspose(1, 5, padding='same'))
+            self.G.add(Activation('sigmoid'))
 
         if self.verbose: self.G.summary()
         return self.G
@@ -654,10 +662,11 @@ class RGAN:
                         optimizer=optimizer, metrics=['accuracy'])
         return self.AM
 
-    def buildModel(self, input_shape, latent_input_dim, input_length_dim):
+    def buildModel(self, input_shape, latent_input_dim, input_length_dim, thin_model=False):
         self.input_shape = input_shape
         self.input_length_dim = input_length_dim
         self.latent_input_dim = latent_input_dim
+        self.thin_model = thin_model
 
         self.DIS = self.discriminator_model()
         self.GEN = self.generator()
@@ -841,7 +850,7 @@ if __name__ == "__main__":
     dscan = ae.decode(latent)
     # ls.plotScan(scan[to_show_idx], dscan[to_show_idx])
 
-    ae.fitModel(x[900:5000], x_test=None, epochs=30, verbose=0)
+    ae.fitModel(x[900:2000], x_test=None, epochs=30, verbose=0)
 
     scan = x[scan_idx:(scan_idx + batch_sz*gan_batch_sz)]
     latent = ae.encode(scan)
@@ -851,8 +860,8 @@ if __name__ == "__main__":
 
     scan_ahead = x[batch_sz + scan_ahead_step]
 
-    gan = RGAN()
-    gan.buildModel((ls.originalScansDim(), 1, 1,), 16, batch_sz)
+    gan = RGAN(verbose=False)
+    gan.buildModel((ls.originalScansDim(), 1, 1,), 16, batch_sz, thin_model=True)
 
     conc = int(8192/32)
     latent = ae.encode(x[:conc])

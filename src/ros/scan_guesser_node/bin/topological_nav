@@ -20,7 +20,7 @@ import scan_guesser_node.guesser_utils as sgu
 
 class TopologicalNavigationNode:
     def __init__(self):
-        map_name = rospy.get_param('~map_name', 'diag_floor_b1_topo')
+        map_name = rospy.get_param('~map_name', 'diag_floor_b1')
         map_topic = rospy.get_param('~map_topic', '/map')
         pose_topic = rospy.get_param('~pose_topic', '/amcl_pose')
         movebase_status_topic = rospy.get_param('~movebase_send_goal', '/move_base/status')
@@ -30,7 +30,6 @@ class TopologicalNavigationNode:
         self.topo_nodes_pub = rospy.Publisher(topo_nodes, MarkerArray, queue_size=10)
         self.topo_nav_nodes_pub = rospy.Publisher(topo_nav_nodes, MarkerArray, queue_size=10)
         self.movebase_al = actionlib.SimpleActionClient("move_base", MoveBaseAction)
-
 
         self.nodes = None
         self.mtx = Lock()
@@ -42,7 +41,8 @@ class TopologicalNavigationNode:
             self.nodes = np.load(self.store_path)
             print "-- Loaded nodes #" + str(self.nodes.shape[0]) + " from", self.store_path
 
-        self.movebase_status_sub = rospy.Subscriber(movebase_status_topic, GoalStatusArray, self.movebaseStatusCb)
+        self.movebase_status_sub = rospy.Subscriber(movebase_status_topic,
+                                                    GoalStatusArray, self.movebaseStatusCb)
         self.pose_sub = rospy.Subscriber(pose_topic, PoseWithCovarianceStamped, self.poseCb)
         self.map_sub = rospy.Subscriber(map_topic, OccupancyGrid, self.mapCb)
 
@@ -95,7 +95,9 @@ class TopologicalNavigationNode:
         movebase_goal.target_pose.header.stamp = rospy.Time.now()
 
         self.movebase_al.wait_for_server()
-        print "-- Movebase movebase_goal sent [", movebase_goal.target_pose.pose.position.x, movebase_goal.target_pose.pose.position.y, "]"
+        print "-- Movebase movebase_goal sent [", \
+            movebase_goal.target_pose.pose.position.x, \
+            movebase_goal.target_pose.pose.position.y, "]"
         self.movebase_al.send_goal(movebase_goal)
         # self.movebase_al.wait_for_result()
 
@@ -106,26 +108,33 @@ class TopologicalNavigationNode:
         r_position_xy = self.robot_position
         self.mtx.release()
 
+        mb_send_goal = False
         if len(data.status_list) == 0: mb_send_goal = True
         else:
             mbg_status = data.status_list[-1].status
-            mb_send_goal = (mbg_status == GoalStatus.SUCCEEDED or mbg_status == GoalStatus.ABORTED or mbg_status == GoalStatus.PREEMPTED) # GoalStatus.ACTIVE
+            mb_send_goal = (mbg_status == GoalStatus.SUCCEEDED
+                            or mbg_status == GoalStatus.ABORTED
+                            or mbg_status == GoalStatus.PREEMPTED) # GoalStatus.ACTIVE
 
+        if not mb_send_goal: return
         _, rnd_node = self.__getRndNode()
         _, robot_node = self.__getClosestNode(r_position_xy)
 
         marker_array = MarkerArray()
-        if mb_send_goal:
-            marker_array.markers.append(self.__makeMarker(0, rnd_node[0], rnd_node[1],
-                                                          scale=Vector3(0.8, 0.8, 0.8), r_ch=0.23529411764, g_ch=0.70196078431, b_ch=0.4431372549))
+        marker_array.markers.append(self.__makeMarker(0, rnd_node[0], rnd_node[1],
+                                                      scale=Vector3(0.8, 0.8, 0.8),
+                                                      r_ch=0.86274509803,
+                                                      g_ch=0.07843137254,
+                                                      b_ch=0.23529411764))
         marker_array.markers.append(self.__makeMarker(1, robot_node[0], robot_node[1],
-                                                      scale=Vector3(0.8, 0.8, 0.8), r_ch=0.86274509803, g_ch=0.07843137254, b_ch=0.23529411764))
+                                                      scale=Vector3(0.6, 0.6, 0.6)))
         self.topo_nav_nodes_pub.publish(marker_array)
-        if mb_send_goal: self.__sendMBGoal(rnd_node)
+        self.__sendMBGoal(rnd_node)
 
     def poseCb(self, data):
         self.mtx.acquire()
-        self.robot_position = np.array([data.pose.pose.position.x, data.pose.pose.position.y]).astype(np.float32)
+        self.robot_position = np.array([data.pose.pose.position.x,
+                                        data.pose.pose.position.y]).astype(np.float32)
         self.mtx.release()
 
     def mapCb(self, data):
@@ -160,7 +169,7 @@ class TopologicalNavigationNode:
                 if potential[i, j] < 0.0001:
                     found = False
                     for n in range(len(nodes)):
-                        if abs(np.sum(np.linalg.norm(nodes[n] - np.array([i, j])))) < 50: # 50
+                        if abs(np.sum(np.linalg.norm(nodes[n] - np.array([i, j])))) < 50:
                             found = True
                             break
                     if not found:

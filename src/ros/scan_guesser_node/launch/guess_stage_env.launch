@@ -2,7 +2,7 @@
   <arg name="mapfile" default="$(find stage_ros)/world/willow-full.yaml"/>
   <arg name="worldfile" default="$(find stage_ros)/world/willow-erratic.world"/>
   <arg name="urdffile" default=""/>
-  <arg name="rviz_cfg" default="$(find navigation_stage)/single_robot.rviz"/>
+  <arg name="rviz_cfg" default="$(find scan_guesser_node)/single_robot.rviz"/>
   <arg name="initial_pose_x" default="5.5"/>
   <arg name="initial_pose_y" default="1.75"/>
   <arg name="initial_pose_a" default="0.0"/>
@@ -29,25 +29,22 @@
     <param name="oscillation_timeout" value="30.0"/>
     <param name="oscillation_distance" value="0.5"/>
     <param name="base_local_planner" value="dwa_local_planner/DWAPlannerROS"/>
-    <rosparam file="$(find navigation_stage)/move_base_config/costmap_common_params.yaml"
+    <rosparam file="$(find scan_guesser_node)/cfg/costmap_common_params.yaml"
               command="load" ns="global_costmap"/>
-    <rosparam file="$(find navigation_stage)/move_base_config/costmap_common_params.yaml"
+    <rosparam file="$(find scan_guesser_node)/cfg/costmap_common_params.yaml"
               command="load" ns="local_costmap"/>
-    <rosparam file="$(find navigation_stage)/move_base_config/local_costmap_params.yaml"
-              command="load"/>
-    <rosparam file="$(find navigation_stage)/move_base_config/global_costmap_params.yaml"
-              command="load"/>
-    <rosparam file="$(find navigation_stage)/move_base_config/base_local_planner_params.yaml"
-              command="load"/>
-    <rosparam file="$(find navigation_stage)/move_base_config/dwa_local_planner_params.yaml"
-              command="load"/>
+    <rosparam file="$(find scan_guesser_node)/cfg/local_costmap_params.yaml" command="load"/>
+    <rosparam file="$(find scan_guesser_node)/cfg/global_costmap_params.yaml" command="load"/>
+    <rosparam file="$(find scan_guesser_node)/cfg/base_local_planner_params.yaml" command="load"/>
+    <rosparam file="$(find scan_guesser_node)/cfg/dwa_local_planner_params.yaml" command="load"/>
   </node>
 
   <node pkg="map_server" name="map_server" type="map_server" args="$(arg mapfile)">
     <param name="frame_id" value="$(arg global_frame_id)"/>
   </node>
 
-  <node pkg="stage_ros" name="stageros" type="stageros" args="-g $(arg worldfile)">
+  <node pkg="stage_ros" name="stageros" type="stageros" args="$(arg worldfile)">
+    <!-- -g headless -->
     <remap from="base_scan" to="$(arg scan_topic)"/>
     <remap from="cmd_vel" to="$(arg cmd_vel_topic)"/>
     <param name="base_watchdog_timeout" value="0.2"/>

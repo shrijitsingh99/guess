@@ -61,11 +61,11 @@ if __name__ == "__main__":
     print("| -- ScanGuesser test-socket -- |")
     print("| ----------------------------- |\n")
     skt_pkg_scaling = 1000
-    scan_ahead_step = 10
-    scan_seq_batch = 8
+    scan_ahead_step = 32
+    scan_seq_batch = 16
     scan_length = 512
     clip_scans_at = 5.0
-    add_scan = 0 # number of pkg receive to update
+    add_scan = 0 # number of pkg to receive to update
     guesser = ScanGuesser(scan_length, # original_scan_dim
                           net_model="lstm",  # default; thin; lstm
                           scan_batch_sz=scan_seq_batch,  # sequence of scans as input
