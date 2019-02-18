@@ -41,7 +41,6 @@ class TopologicalNavigationNode:
         if os.path.isfile(self.store_path):
             self.nodes = np.load(self.store_path)
             print "-- Loaded nodes #" + str(self.nodes.shape[0]) + " from", self.store_path
-            self.__publishTopoNodes()
 
         self.movebase_status_sub = rospy.Subscriber(movebase_status_topic, GoalStatusArray, self.movebaseStatusCb)
         self.pose_sub = rospy.Subscriber(pose_topic, PoseWithCovarianceStamped, self.poseCb)
@@ -107,7 +106,11 @@ class TopologicalNavigationNode:
         r_position_xy = self.robot_position
         self.mtx.release()
 
-        mb_send_goal = data.status_list[-1].status != GoalStatus.ACTIVE
+        if len(data.status_list) == 0: mb_send_goal = True
+        else:
+            mbg_status = data.status_list[-1].status
+            mb_send_goal = (mbg_status == GoalStatus.SUCCEEDED or mbg_status == GoalStatus.ABORTED or mbg_status == GoalStatus.PREEMPTED) # GoalStatus.ACTIVE
+
         _, rnd_node = self.__getRndNode()
         _, robot_node = self.__getClosestNode(r_position_xy)
 
@@ -115,8 +118,8 @@ class TopologicalNavigationNode:
         if mb_send_goal:
             marker_array.markers.append(self.__makeMarker(0, rnd_node[0], rnd_node[1],
                                                           scale=Vector3(0.8, 0.8, 0.8), r_ch=0.23529411764, g_ch=0.70196078431, b_ch=0.4431372549))
-            marker_array.markers.append(self.__makeMarker(1, robot_node[0], robot_node[1],
-                                                          scale=Vector3(0.8, 0.8, 0.8), r_ch=0.86274509803, g_ch=0.07843137254, b_ch=0.23529411764))
+        marker_array.markers.append(self.__makeMarker(1, robot_node[0], robot_node[1],
+                                                      scale=Vector3(0.8, 0.8, 0.8), r_ch=0.86274509803, g_ch=0.07843137254, b_ch=0.23529411764))
         self.topo_nav_nodes_pub.publish(marker_array)
         if mb_send_goal: self.__sendMBGoal(rnd_node)
 
@@ -126,7 +129,10 @@ class TopologicalNavigationNode:
         self.mtx.release()
 
     def mapCb(self, data):
-        if not self.nodes is None: return
+        if not self.nodes is None:
+            self.__publishTopoNodes()
+            return
+
         print "-- Map received"
         img_w, img_h = data.info.width, data.info.height
         ref = np.zeros((img_h, img_w), dtype=np.uint8)
