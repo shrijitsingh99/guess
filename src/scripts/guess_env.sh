@@ -2,7 +2,10 @@
 
 GUESS_ROOT=/home/sapienzbot/ws/guess
 rcfg=${GUESS_ROOT}/config/rviz/stage_guess.config.rviz
-map_name=diag_floor_b1
+
+#diag_floor_b1
+map_name=simple_corridor
+
 map_file=${GUESS_ROOT}/config/world/${map_name}
 # urdf_file=${GUESS_ROOT}/config/ros/urdf/
 

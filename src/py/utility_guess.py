@@ -591,9 +591,9 @@ class RGAN:
             self.D.add(LeakyReLU(alpha=0.2))
             self.D.add(Dropout(dropout))
 
-        self.D.add(Conv2D(depth*8, 5, strides=1, padding='same'))
-        self.D.add(LeakyReLU(alpha=0.2))
-        self.D.add(Dropout(dropout))
+            self.D.add(Conv2D(depth*8, 5, strides=1, padding='same'))
+            self.D.add(LeakyReLU(alpha=0.2))
+            self.D.add(Dropout(dropout))
 
         self.D.add(Flatten())
         self.D.add(Dense(1))
@@ -611,15 +611,25 @@ class RGAN:
         self.G.add(LSTM(depth, input_shape=(self.input_length_dim, 2*self.latent_input_dim),
                         return_sequences=True,
                         activation='tanh', recurrent_activation='hard_sigmoid'))
-        self.G.add(LSTM(depth, return_sequences=True,
-                        activation='tanh', recurrent_activation='hard_sigmoid'))
 
-        if self.thin_model:
-            self.G.add(Flatten())
-            self.G.add(Dense(self.input_shape[0]))
-            self.G.add(Reshape((self.input_shape[0], 1, 1)))
+        if self.thin_model and False:
+            self.G.add(Dense(depth))
+            self.G.add(BatchNormalization(momentum=0.9))
+            self.G.add(Activation('relu'))
+            self.G.add(Reshape((self.input_length_dim, 1, depth)))
+            self.G.add(Dropout(dropout))
+
+            self.G.add(UpSampling2D(size=(8, 1)))
+            self.G.add(Conv2DTranspose(int(depth/4), 5, padding='same'))
+            self.G.add(BatchNormalization(momentum=0.9))
+            self.G.add(Activation('relu'))
+
+            self.G.add(UpSampling2D(size=(4, 1)))
+            self.G.add(Conv2DTranspose(1, 5, padding='same'))
             self.G.add(Activation('sigmoid'))
         else:
+            self.G.add(LSTM(depth, return_sequences=True,
+                            activation='tanh', recurrent_activation='hard_sigmoid'))
             self.G.add(Dense(dim*depth))
             self.G.add(BatchNormalization(momentum=0.9))
             self.G.add(Activation('relu'))
@@ -798,7 +808,7 @@ if __name__ == "__main__":
     # diag_labrococo.txt
     # diag_underground.txt
     ls = LaserScans(verbose=True)
-    ls.load("../../dataset/diag_labrococo.txt",
+    ls.load("../../dataset/diag_underground.txt",
             scan_res=0.00653590704, scan_fov=(3/2)*np.pi,
             scan_beam_num=512, clip_scans_at=8, scan_offset=8)
 
@@ -844,10 +854,10 @@ if __name__ == "__main__":
     ae.fitModel(x[:1000], x_test=None, epochs=30, verbose=0)
     print('Fitting VAE model done.')
 
-    scan = x[scan_idx:(scan_idx + batch_sz*gan_batch_sz)]
-    latent = ae.encode(scan)
+    # scan = x[scan_idx:(scan_idx + batch_sz*gan_batch_sz)]
+    # latent = ae.encode(scan)
     # plt.plot(latent[to_show_idx])
-    dscan = ae.decode(latent)
+    # dscan = ae.decode(latent)
     # ls.plotScan(scan[to_show_idx], dscan[to_show_idx])
 
     ae.fitModel(x[900:2000], x_test=None, epochs=30, verbose=0)
@@ -856,14 +866,14 @@ if __name__ == "__main__":
     latent = ae.encode(scan)
     # plt.plot(latent[to_show_idx])
     dscan = ae.decode(latent)
-    ls.plotScan(scan[to_show_idx], dscan[to_show_idx])
+    # ls.plotScan(scan[to_show_idx], dscan[to_show_idx])
 
     scan_ahead = x[batch_sz + scan_ahead_step]
 
-    gan = RGAN(verbose=False)
+    gan = RGAN(verbose=True)
     gan.buildModel((ls.originalScansDim(), 1, 1,), 16, batch_sz, thin_model=True)
 
-    conc = int(8192/32)
+    conc = int(8192)
     latent = ae.encode(x[:conc])
     in_latent = np.concatenate((latent, ls.cmdVel()[:conc]), axis=1)
     in_latent = np.reshape(in_latent,
