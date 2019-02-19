@@ -62,6 +62,9 @@ if __name__ == "__main__":
     print("| ----------------------------- |\n")
     skt_pkg_scaling = 1000
     scan_ahead_step = 100
+    module_rate = 1.0/30 # [freq]
+    max_vel = 0.5  # [m/s]
+    max_dist_proj = max_vel*scan_ahead_step*module_fps
     scan_seq_batch = 8
     scan_length = 512
     clip_scans_at = 5.0
@@ -70,6 +73,7 @@ if __name__ == "__main__":
                           net_model="lstm",  # default; thin; lstm
                           scan_batch_sz=scan_seq_batch,  # sequence of scans as input
                           gen_step_ahead=scan_ahead_step,  # \# of 'scansteps' to look ahead
+                          max_dist_projector=max_dist_proj,
                           clip_scans_at=clip_scans_at,  # max beam length [m]
                           scan_res=0.0085915, scan_fov=4.398848,#(3/2)*np.pi,
                           ae_epochs=40,

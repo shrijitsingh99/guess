@@ -11,7 +11,8 @@ class ScanGuesser:
     def __init__(self,
                  original_scan_dim, net_model="default",
                  scan_batch_sz=8, clip_scans_at=8.0,
-                 scan_res=0.00653590704, scan_fov=(3/2)*np.pi, gen_step_ahead=1,
+                 scan_res=0.00653590704, scan_fov=(3/2)*np.pi,
+                 gen_step_ahead=1, max_dist_projector=1.0,
                  gan_batch_sz=32, gan_train_steps=5,
                  ae_variational=True, ae_convolutional=False,
                  ae_batch_sz=128, ae_latent_dim=10, ae_intermediate_dim=128, ae_epochs=20,
@@ -25,6 +26,7 @@ class ScanGuesser:
         self.scan_batch_sz = scan_batch_sz
         self.clip_scans_at = clip_scans_at
         self.gen_step_ahead = gen_step_ahead
+        self.max_dist_projector = max_dist_projector
         self.ae_epochs = ae_epochs
         self.ae_latent_dim = ae_latent_dim
         self.gan_batch_sz = gan_batch_sz
@@ -135,7 +137,11 @@ class ScanGuesser:
                 next_ts[int(ns/self.scan_batch_sz) - 1, :, :] = ts[ns:ns + self.gen_step_ahead]
 
             _, hp = self.ls.computeTransforms(next_cmdv, next_ts)
-            hp[:,:2] += 0.5  # maximum is 1m, normalize in [0,1]
+            translation = hp[:, :2]
+            np.clip(translation, a_min=-self.max_dist_projector,
+                    a_max=self.max_dist_projector, out=translation)
+            translation = translation/self.max_dist_projector + 1.0
+            hp[:,:2] = 0.5*translation
             for th in range(hp.shape[0]):
                 if hp[th, 2] < 0.0: hp[th, 2] = 2*np.pi + hp[th, 2]
             hp[:, 2] = hp[:, 2]/(2*np.pi)
@@ -259,7 +265,8 @@ class ScanGuesser:
         cmd_vel = cmd_vel.reshape((1, cmd_vel.shape[0], cmd_vel.shape[1],))
         pparams = np.concatenate((cmd_vel, ts), axis=2)
         hp = self.projector.predict(pparams)
-        hp[:,:2] -= 0.5  # maximum is 1m, normalize in [0,1]
+        hp[:,:2] = 2.0*hp[:,:2] - 1.0
+        hp[:,:2] *= self.max_dist_projector
         hp[:, 2] = hp[:, 2]*2*np.pi
 
         if self.verbose: print("Prediction in", timer.elapsed_time())
