@@ -34,7 +34,7 @@ wait_sec() {
 
 GUESS_ROOT=/home/sapienzbot/ws/guess
 pyscript=${GUESS_ROOT}/src/py/scan_guesser_socket.py
-cmd_vel_topic=/teleop_velocity_smoother/raw_cmd_vel
+cmd_vel_topic=/cmd_vel
 map_name=simple_corridor
 
 wait_sec 1 "Launching Guess-stage topological-navigation"

@@ -749,6 +749,7 @@ class SimpleLSTM:
         self.net.add(LSTM(depth, input_shape=(self.batch_seq_num, self.input_dim),
                           return_sequences=True, activation='tanh',
                           recurrent_activation='hard_sigmoid'))
+        # self.D.add(LeakyReLU(alpha=0.2))
         self.net.add(LSTM(int(0.5*depth), return_sequences=True,
                           activation='tanh', recurrent_activation='hard_sigmoid'))
 
@@ -766,7 +767,7 @@ class SimpleLSTM:
         # self.net.add(Dropout(dropout))
 
         self.net.add(Flatten())
-        self.net.add(Dense(self.output_dim))
+        self.net.add(Dense(self.output_dim, use_bias=True))
         self.net.add(Activation('sigmoid'))
 
         if self.verbose: self.net.summary()
@@ -774,11 +775,10 @@ class SimpleLSTM:
 
     def buildModel(self):
         if self.net_model: return self.net_model
-        optimizer = RMSprop(lr=0.00002, decay=6e-8)
+        optimizer = RMSprop(lr=0.001, decay=6e-8)
         self.net_model = Sequential()
         self.net_model.add(self.lstm())
-        self.net_model.compile(loss='binary_crossentropy',
-                               optimizer=optimizer, metrics=['accuracy'])
+        self.net_model.compile(loss='mean_squared_error', optimizer=optimizer, metrics=['accuracy'])
         return self.net_model
 
     def fitModel(self, x, y, epochs=10, x_test=None, y_test=None):

@@ -207,7 +207,7 @@ Visualization Manager:
       Marker Topic: /topo_nodes
       Name: topo_nodes
       Namespaces:
-        {}
+        marker_test_2: true
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray

@@ -83,7 +83,7 @@ class ScanGuesser:
             self.gan_latent_dim = (6 + self.ae_latent_dim)
             self.gan = RGAN(verbose=self.verbose)
             self.gan.buildModel((self.original_scan_dim, 1, 1,),
-                                self.gan_latent_dim, self.scan_batch_sz, thin_model=True)
+            self.gan_latent_dim, self.scan_batch_sz, thin_model=False)
         else:
             self.gan_latent_dim = (6 + self.ae_latent_dim)*scan_batch_sz
             self.gan = GAN(verbose=self.verbose)
@@ -122,14 +122,16 @@ class ScanGuesser:
 
             pparams = np.concatenate((prev_cmdv, prev_ts), axis=2)
 
-            e_iter = ts.shape[0] - self.scan_batch_sz
+            e_iter = ts.shape[0] - self.gen_step_ahead
             n_rows = int((ts.shape[0] - self.scan_batch_sz)/self.scan_batch_sz)
             next_cmdv = np.empty((n_rows, self.gen_step_ahead, cmd_vel.shape[1]))
             next_ts = np.empty((n_rows, self.gen_step_ahead, ts.shape[1]))
             for ns in range(self.scan_batch_sz, e_iter, self.scan_batch_sz):
+                if cmd_vel[ns:ns + self.gen_step_ahead].shape[0] != self.gen_step_ahead: break
                 next_cmdv[int(ns/self.scan_batch_sz) - 1, :, :] = cmd_vel[ns:ns + self.gen_step_ahead]
             next_ts = np.empty((n_rows, self.gen_step_ahead, ts.shape[1]))
             for ns in range(self.scan_batch_sz, e_iter, self.scan_batch_sz):
+                if ts[ns:ns + self.gen_step_ahead].shape[0] != self.gen_step_ahead: break
                 next_ts[int(ns/self.scan_batch_sz) - 1, :, :] = ts[ns:ns + self.gen_step_ahead]
 
             _, hp = self.ls.computeTransforms(next_cmdv, next_ts)
@@ -149,6 +151,7 @@ class ScanGuesser:
     def __updateGan(self, scans, cmd_vel, ts, verbose=False):
         latent = self.encodeScan(scans)
         x_latent, next_scan, pp, hp = self.__reshapeGanInput(scans, cmd_vel, ts, latent)
+        # p_metrics = np.zeros((2,))
         p_metrics =  self.projector.fitModel(pp, hp, epochs=40)
         # g_metrics = np.zeros((4,))
         g_metrics = self.gan.fitModel(x_latent, next_scan,
@@ -159,6 +162,7 @@ class ScanGuesser:
     def __fitModel(self, scans, cmd_vel, ts, verbose=False):
         print("-- Update model... ", end='')
         timer = ElapsedTimer()
+        # ae_metrics = np.zeros((2,))
         ae_metrics = self.__updateAE(scans)
         gan_metrics = self.__updateGan(scans, cmd_vel, ts)
         print("done (\033[1;32m" + timer.elapsed_time() + "\033[0m).")

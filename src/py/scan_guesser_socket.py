@@ -61,8 +61,8 @@ if __name__ == "__main__":
     print("| -- ScanGuesser test-socket -- |")
     print("| ----------------------------- |\n")
     skt_pkg_scaling = 1000
-    scan_ahead_step = 32
-    scan_seq_batch = 16
+    scan_ahead_step = 100
+    scan_seq_batch = 8
     scan_length = 512
     clip_scans_at = 5.0
     add_scan = 0 # number of pkg to receive to update
@@ -72,9 +72,9 @@ if __name__ == "__main__":
                           gen_step_ahead=scan_ahead_step,  # \# of 'scansteps' to look ahead
                           clip_scans_at=clip_scans_at,  # max beam length [m]
                           scan_res=0.0085915, scan_fov=4.398848,#(3/2)*np.pi,
-                          ae_epochs=50,
+                          ae_epochs=40,
                           ae_variational=True, ae_convolutional=False,
-                          gan_batch_sz=16, gan_train_steps=15, start_update_thr=True)
+                          gan_batch_sz=8, gan_train_steps=15, start_update_thr=True)
 
     guesser.init(None, init_models=True, init_scan_batch_num=1)
 
