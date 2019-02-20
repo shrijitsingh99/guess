@@ -13,6 +13,7 @@ class ScanGuesser:
                  scan_batch_sz=8, clip_scans_at=8.0,
                  scan_res=0.00653590704, scan_fov=(3/2)*np.pi,
                  gen_step_ahead=1, max_dist_projector=1.0,
+                 ae_fit=True, proj_fit=True, gan_fit=True,
                  gan_batch_sz=32, gan_train_steps=5,
                  ae_variational=True, ae_convolutional=False,
                  ae_batch_sz=128, ae_latent_dim=10, ae_intermediate_dim=128, ae_epochs=20,
@@ -29,6 +30,9 @@ class ScanGuesser:
         self.max_dist_projector = max_dist_projector
         self.ae_epochs = ae_epochs
         self.ae_latent_dim = ae_latent_dim
+        self.ae_fit = ae_fit
+        self.proj_fit = proj_fit
+        self.gan_fit = gan_fit
         self.gan_batch_sz = gan_batch_sz
         self.gan_train_steps = gan_train_steps
         self.online_scans = None
@@ -85,9 +89,9 @@ class ScanGuesser:
             self.gan_latent_dim = (6 + self.ae_latent_dim)
             self.gan = RGAN(verbose=self.verbose)
             self.gan.buildModel((self.original_scan_dim, 1, 1,),
-            self.gan_latent_dim, self.scan_batch_sz, thin_model=False)
+                                self.gan_latent_dim, self.scan_batch_sz, thin_model=False)
         else:
-            self.gan_latent_dim = (6 + self.ae_latent_dim)*scan_batch_sz
+            self.gan_latent_dim = (6 + self.ae_latent_dim)*self.scan_batch_sz
             self.gan = GAN(verbose=self.verbose)
             self.gan.buildModel((self.original_scan_dim, 1, 1,),
                                 self.gan_latent_dim, model_id=self.net_model)
@@ -115,60 +119,59 @@ class ScanGuesser:
             ts = ts.reshape((ts.shape[0], 1))
             e_iter = ts.shape[0] - self.gen_step_ahead
             n_rows = int((ts.shape[0] - self.gen_step_ahead)/self.scan_batch_sz)
-            prev_cmdv = np.empty((n_rows, self.scan_batch_sz, cmd_vel.shape[1]))
             prev_ts  = np.empty((n_rows, self.scan_batch_sz, ts.shape[1]))
+            prev_cmdv = np.empty((n_rows, self.scan_batch_sz, cmd_vel.shape[1]))
             for ns in range(0, e_iter, self.scan_batch_sz):
-                prev_cmdv[int(ns/self.scan_batch_sz), :, :] = cmd_vel[ns:ns + self.scan_batch_sz]
-            for ns in range(0, e_iter, self.scan_batch_sz):
-                prev_ts[int(ns/self.scan_batch_sz), :, :] = ts[ns:ns + self.scan_batch_sz]
-
+                prev_ts[int(ns/self.scan_batch_sz)] = ts[ns:ns + self.scan_batch_sz]
+                prev_cmdv[int(ns/self.scan_batch_sz)] = cmd_vel[ns:ns + self.scan_batch_sz]
             pparams = np.concatenate((prev_cmdv, prev_ts), axis=2)
 
             e_iter = ts.shape[0] - self.gen_step_ahead
-            n_rows = int((ts.shape[0] - self.scan_batch_sz)/self.scan_batch_sz)
-            next_cmdv = np.empty((n_rows, self.gen_step_ahead, cmd_vel.shape[1]))
+            n_rows = int((ts.shape[0] - self.gen_step_ahead)/self.scan_batch_sz)
             next_ts = np.empty((n_rows, self.gen_step_ahead, ts.shape[1]))
+            next_cmdv = np.zeros((n_rows, self.gen_step_ahead, cmd_vel.shape[1]))
             for ns in range(self.scan_batch_sz, e_iter, self.scan_batch_sz):
-                if cmd_vel[ns:ns + self.gen_step_ahead].shape[0] != self.gen_step_ahead: break
-                next_cmdv[int(ns/self.scan_batch_sz) - 1, :, :] = cmd_vel[ns:ns + self.gen_step_ahead]
-            next_ts = np.empty((n_rows, self.gen_step_ahead, ts.shape[1]))
-            for ns in range(self.scan_batch_sz, e_iter, self.scan_batch_sz):
-                if ts[ns:ns + self.gen_step_ahead].shape[0] != self.gen_step_ahead: break
-                next_ts[int(ns/self.scan_batch_sz) - 1, :, :] = ts[ns:ns + self.gen_step_ahead]
+                next_ts[int(ns/self.scan_batch_sz) - 1] = ts[ns:ns + self.gen_step_ahead]
+                next_cmdv[int(ns/self.scan_batch_sz) - 1] = cmd_vel[ns:ns + self.gen_step_ahead]
+            next_ts[-1] = ts[-self.gen_step_ahead:]
+            next_cmdv[-1] = cmd_vel[-self.gen_step_ahead:]
 
             _, hp = self.ls.computeTransforms(next_cmdv, next_ts)
+            # translation normalization [-max_dist, max_dist] -> [0, 1]
             translation = hp[:, :2]
             np.clip(translation, a_min=-self.max_dist_projector,
                     a_max=self.max_dist_projector, out=translation)
-            translation = translation/self.max_dist_projector + 1.0
-            hp[:,:2] = 0.5*translation
-            for th in range(hp.shape[0]):
-                if hp[th, 2] < 0.0: hp[th, 2] = 2*np.pi + hp[th, 2]
+            # translation = 0.5*(translation/self.max_dist_projector + 1.0)
+            hp[:,:2] = translation/self.max_dist_projector
+            # theta normalization [-pi, pi] -> [0, 1]
+            # for th in range(hp.shape[0]):
+            #     if hp[th, 2] < 0.0: hp[th, 2] = 2*np.pi + hp[th, 2]
             hp[:, 2] = hp[:, 2]/(2*np.pi)
         if not next_scan is None and x_latent.shape[0] != next_scan.shape[0]:
-            x_latent = x_latent[:next_scan.shape[0], :, :]
+            x_latent = x_latent[:next_scan.shape[0]]
         return x_latent, next_scan, pparams, hp
 
     def __updateAE(self, scans, verbose=None):
         if verbose is None: verbose = self.verbose
         v = 1 if verbose else 0
-        return self.ae.fitModel(scans, epochs=self.ae_epochs, verbose=v)
+        if self.ae_fit: return self.ae.fitModel(scans, epochs=self.ae_epochs, verbose=v)
+        else: return np.zeros((2,))
 
     def __updateGan(self, scans, cmd_vel, ts, verbose=False):
         latent = self.encodeScan(scans)
         x_latent, next_scan, pp, hp = self.__reshapeGanInput(scans, cmd_vel, ts, latent)
-        # p_metrics = np.zeros((2,))
-        p_metrics =  self.projector.fitModel(pp, hp, epochs=40)
-        # g_metrics = np.zeros((4,))
-        g_metrics = self.gan.fitModel(x_latent, next_scan,
-                                      train_steps=self.gan_train_steps,
-                                      batch_sz=self.gan_batch_sz, verbose=verbose)[-1]
+        p_metrics, g_metrics = np.zeros((2,)), np.zeros((4,))
+        if self.proj_fit:
+            p_metrics = self.projector.fitModel(pp, hp, epochs=40)
+        if self.gan_fit:
+            g_metrics = self.gan.fitModel(x_latent, next_scan,
+                                          train_steps=self.gan_train_steps,
+                                          batch_sz=self.gan_batch_sz, verbose=verbose) # [-1]
         return np.concatenate((p_metrics, g_metrics))
 
     def __fitModel(self, scans, cmd_vel, ts, verbose=False):
         print("-- Update model... ", end='')
         timer = ElapsedTimer()
-        # ae_metrics = np.zeros((2,))
         ae_metrics = self.__updateAE(scans)
         gan_metrics = self.__updateGan(scans, cmd_vel, ts)
         print("done (\033[1;32m" + timer.elapsed_time() + "\033[0m).")
@@ -222,6 +225,7 @@ class ScanGuesser:
             self.online_ts = np.concatenate((self.online_ts, ts))
 
         min_scan_num = self.gan_batch_sz*self.scan_batch_sz + self.gen_step_ahead
+        # min_scan_num *=5
         # print(self.online_scans.shape[0], min_scan_num)
         if self.online_scans.shape[0] < min_scan_num: return False
 
@@ -251,7 +255,9 @@ class ScanGuesser:
         return self.ae.encode(scans)
 
     def decodeScan(self, scans_latent):
-        return self.ae.decode(scans_latent)
+        decoded = self.ae.decode(scans_latent)
+        decoded[decoded > 0.9] = 0.0
+        return decoded
 
     def generateScan(self, scans, cmd_vel, ts):
         if self.verbose: timer = ElapsedTimer()
@@ -259,18 +265,19 @@ class ScanGuesser:
 
         latent = self.encodeScan(scans)
         x_latent, _, _, _ = self.__reshapeGanInput(None, cmd_vel, ts, latent)
-        gen = self.gan.generate(x_latent)
+        gen = self.gan.generate(x_latent)[0]
+        gen[gen > 0.9] = 0.0
 
         ts = ts.reshape((1, ts.shape[0], 1,))
         cmd_vel = cmd_vel.reshape((1, cmd_vel.shape[0], cmd_vel.shape[1],))
         pparams = np.concatenate((cmd_vel, ts), axis=2)
         hp = self.projector.predict(pparams)
-        hp[:,:2] = 2.0*hp[:,:2] - 1.0
+        # hp[:,:2] = 2.0*hp[:,:2] - 1.0
         hp[:,:2] *= self.max_dist_projector
         hp[:, 2] = hp[:, 2]*2*np.pi
 
         if self.verbose: print("Prediction in", timer.elapsed_time())
-        return gen[0], self.decodeScan(latent), hp[0]
+        return gen, self.decodeScan(latent), hp[0]
 
     def generateRawScan(self, raw_scans, cmd_vel, ts):
         if raw_scans.shape[0] < self.scan_batch_sz: return None

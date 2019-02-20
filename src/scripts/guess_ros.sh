@@ -16,6 +16,16 @@ nc='\033[0m'
 bt=$(tput bold)
 nt=$(tput sgr0)
 
+print_usage() {
+    echo -e "usage: ./guess_ros.sh [<map_name> default:simple_corridor]"
+    echo -e "available maps: simple_corridor - simple_corridor"
+}
+
+if [ "$1" == "-h" ] || [ "$1" == "-help" ]; then
+    print_usage
+    exit
+fi
+
 wait_sec() {
     local wait_msecs=$(($1*100))
     while [ $wait_msecs -gt 0 ]; do
@@ -32,10 +42,15 @@ wait_sec() {
     echo -e "${bt}$2${nt}${nt}... ${green}done${nc}.${nt}"
 }
 
+if [ $# -lt 1 ]; then
+    map_name=simple_corridor
+else
+    map_name=$1
+fi
+
 GUESS_ROOT=/home/sapienzbot/ws/guess
 pyscript=${GUESS_ROOT}/src/py/scan_guesser_socket.py
 cmd_vel_topic=/cmd_vel
-map_name=simple_corridor
 
 wait_sec 1 "Launching Guess-stage topological-navigation"
 xterm -hold -e "rosrun scan_guesser_node topological_nav _map_name:=${map_name}" &

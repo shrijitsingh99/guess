@@ -73,6 +73,7 @@ class ScanGuesserNode:
         self.mtx.acquire()
         self.cmd_vel = np.array([data.linear.x, data.linear.y, data.linear.z,
                                  data.angular.x, data.angular.y, data.angular.z])
+        print "rm:: cmd_vel", self.cmd_vel[0], self.cmd_vel[5]
         self.mtx.release()
 
     def scanCb(self, data):
@@ -87,6 +88,7 @@ class ScanGuesserNode:
 
             sg_data = self.receiver.getData()*(1.0/self.skt_pkg_scaling)
             sg_tf = sg_data[-3:]
+            sg_tf[2] = 0.0  ## todo remove
             # print "rm:: transform", sg_tf
             sg_data = sg_data[:-3].reshape((2, self.scan_beam_num))
 

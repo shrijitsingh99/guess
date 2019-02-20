@@ -13,7 +13,7 @@ from keras.layers import Conv2D, Conv2DTranspose, UpSampling2D, LSTM, TimeDistri
 from keras.layers import LeakyReLU, Dropout
 from keras.layers import BatchNormalization
 from keras.layers import Lambda, Input, Dense
-from keras.models import Model, Sequential
+from keras.models import Model, Sequential, clone_model
 from keras.losses import mse, binary_crossentropy
 from keras.optimizers import Adam, RMSprop
 from keras.utils import plot_model
@@ -95,7 +95,7 @@ class LaserScans:
     def computeTransform(self, cmdv, ts):
         cb, tb = cmdv, np.zeros((cmdv.shape[0],))
         for t in range(1, ts.shape[0]): tb[t] = ts[t] - ts[t - 1]
-        tstep = max(0.1, np.mean(tb))
+        tstep = max(0.03, np.mean(tb))
         x, y, th = 0.0, 0.0, 0.0
         for n in range(cmdv.shape[0]):
             rk_th = th + 0.5*cb[n, 5]*tstep  # runge-kutta integration
@@ -116,7 +116,6 @@ class LaserScans:
 
     def projectScan(self, scan, cmdv, ts):
         hm, _, _, _ = computeTransform(cmdv, ts)
-
         assert scan.shape[0] == self.scan_beam_num, "Wrong scan size"
         theta = self.scan_res*np.arange(-0.5*self.scan_beam_num, 0.5*self.scan_beam_num)
         pts = np.ones((3, self.scan_beam_num))
@@ -253,6 +252,8 @@ class AutoEncoder:
         self.reshape_rows = 32
         self.encoder = None
         self.decoder = None
+        self.pencoder = None
+        self.pdecoder = None
         self.ae = None
 
     def sampling(self, args):
@@ -263,6 +264,49 @@ class AutoEncoder:
         epsilon = K.random_normal(shape=(batch, dim))
         return z_mean + K.exp(0.5 * z_log_var) * epsilon
 
+
+    def __createEncoder(self, e_in, tr=True):
+        if self.convolutional:
+            enc = Reshape((self.reshape_rows, int(self.original_dim/self.reshape_rows), 1,))(e_in)
+            enc = Conv2D(depth, 5, activation='relu', strides=2, padding='same', trainable=tr)(enc)
+            enc = Conv2D(depth*4, 5, strides=2, padding='same', trainable=tr)(enc)
+            enc = LeakyReLU(alpha=0.2)(enc)
+            enc = Dropout(dropout)(enc)
+            # shape info needed to build decoder model
+            self.enc_shape = K.int_shape(enc)
+            # Out: 1-dim probability
+            enc = Flatten()(enc)
+        else: enc = e_in
+        enc = Dense(self.intermediate_dim, activation='relu', trainable=tr)(enc)
+
+        if self.variational:
+            self.z_mean = Dense(self.latent_dim, trainable=tr, name='z_mean')(enc)
+            self.z_log_var = Dense(self.latent_dim, trainable=tr, name='z_log_var')(enc)
+            z = Lambda(self.sampling, output_shape=(self.latent_dim,), name='z')([self.z_mean, self.z_log_var])
+            encoder = Model(e_in, [self.z_mean, self.z_log_var, z], name='encoder')
+        else:
+            e_out = Dense(self.latent_dim, activation='sigmoid', trainable=tr)(enc)
+            encoder = Model(e_in, e_out, trainable=tr, name='encoder')
+        return encoder
+
+    def __createDecoder(self, d_in, tr=True):
+        if self.convolutional:
+            dec = Dense(self.enc_shape[1]*self.enc_shape[2]*self.enc_shape[3], activation='relu', trainable=tr)(d_in)
+            dec = Reshape((self.enc_shape[1], self.enc_shape[2], self.enc_shape[3]))(dec)
+
+            dec = Conv2DTranspose(filters=int(depth/2), kernel_size=5,
+                              activation='relu', strides=2, padding='same', trainable=tr)(dec)
+            dec = Conv2DTranspose(filters=int(depth/4), kernel_size=5,
+                              activation='relu', strides=2, padding='same', trainable=tr)(dec)
+            dec = Dropout(dropout)(dec)
+            dec = Dense(int(depth/16), activation='relu', trainable=tr)(dec)
+            dec = Flatten()(dec)
+        else:
+            dec = Dense(self.intermediate_dim, activation='relu', trainable=tr)(d_in)
+        d_out = Dense(self.original_dim, activation='sigmoid', trainable=tr)(dec)
+        decoder = Model(d_in, d_out, name='decoder')
+        return decoder
+
     def buildModel(self):
         if not self.ae is None: return self.ae
         input_shape = (self.original_dim,)
@@ -271,53 +315,20 @@ class AutoEncoder:
 
         ## ENCODER
         e_in = Input(shape=input_shape, name='encoder_input')
-        if self.convolutional:
-            enc = Reshape((self.reshape_rows, int(self.original_dim/self.reshape_rows), 1,))(e_in)
-            enc = Conv2D(depth, 5, activation='relu', strides=2, padding='same')(enc)
-            enc = Conv2D(depth*4, 5, strides=2, padding='same')(enc)
-            enc = LeakyReLU(alpha=0.2)(enc)
-            enc = Dropout(dropout)(enc)
-            # shape info needed to build decoder model
-            self.enc_shape = K.int_shape(enc)
-            # Out: 1-dim probability
-            enc = Flatten()(enc)
-        else: enc = e_in
-        enc = Dense(self.intermediate_dim, activation='relu')(enc)
-
-        if self.variational:
-            self.z_mean = Dense(self.latent_dim, name='z_mean')(enc)
-            self.z_log_var = Dense(self.latent_dim, name='z_log_var')(enc)
-            z = Lambda(self.sampling, output_shape=(self.latent_dim,), name='z')([self.z_mean, self.z_log_var])
-            self.encoder = Model(e_in, [self.z_mean, self.z_log_var, z], name='encoder')
-        else:
-            e_out = Dense(self.latent_dim, activation='sigmoid')(enc)
-            self.encoder = Model(e_in, e_out, name='encoder')
+        self.encoder = self.__createEncoder(e_in, tr=True)
+        self.pencoder = self.__createEncoder(e_in, tr=False)
         if self.verbose: self.encoder.summary()
 
         ## DECODER
-        d_in = Input(shape=(self.latent_dim,), name='z_sampling')
-        if self.convolutional:
-            dec = Dense(self.enc_shape[1]*self.enc_shape[2]*self.enc_shape[3], activation='relu')(d_in)
-            dec = Reshape((self.enc_shape[1], self.enc_shape[2], self.enc_shape[3]))(dec)
-
-            dec = Conv2DTranspose(filters=int(depth/2), kernel_size=5,
-                              activation='relu', strides=2, padding='same')(dec)
-            dec = Conv2DTranspose(filters=int(depth/4), kernel_size=5,
-                              activation='relu', strides=2, padding='same')(dec)
-            dec = Dropout(dropout)(dec)
-            dec = Dense(int(depth/16), activation='relu')(dec)
-            dec = Flatten()(dec)
-        else:
-            dec = Dense(self.intermediate_dim, activation='relu')(d_in)
-        d_out = Dense(self.original_dim, activation='sigmoid')(dec)
-        self.decoder = Model(d_in, d_out, name='decoder')
+        d_in = Input(shape=(self.latent_dim,), name='decoder_input')
+        self.decoder = self.__createDecoder(d_in, tr=True)
+        self.pdecoder = self.__createDecoder(d_in, tr=False)
         if self.verbose: self.decoder.summary()
 
         ## AUTOENCODER
         if self.variational:
             vae_out = self.decoder(self.encoder(e_in)[2])
             self.ae = Model(e_in, vae_out, name='vae_mlp')
-
             reconstruction_loss = binary_crossentropy(e_in, vae_out)
             reconstruction_loss *= self.original_dim
 
@@ -347,19 +358,21 @@ class AutoEncoder:
                 for i in range(0, x.shape[0] - self.batch_size, self.batch_size):
                     met = self.ae.train_on_batch(x[i:i + self.batch_size], x[i:i + self.batch_size])
                     ret.append(met)
+        self.pencoder.set_weights(self.encoder.get_weights())
+        self.pdecoder.set_weights(self.decoder.get_weights())
         ret_avgs = np.mean(ret, axis=0)
         return np.array(ret_avgs)
 
     def encode(self, x, batch_size=None):
         if len(x.shape) == 1: x = np.array([x])
         if self.variational:
-            z_mean, _, _ = self.encoder.predict(x, batch_size=batch_size)
+            z_mean, _, _ = self.pencoder.predict(x, batch_size=batch_size)
             return z_mean
         else:
-            return self.encoder.predict(x, batch_size=batch_size)
+            return self.pencoder.predict(x, batch_size=batch_size)
 
     def decode(self, z_mean):
-        return self.decoder.predict(z_mean)
+        return self.pdecoder.predict(z_mean)
 
 class GAN:
     def __init__(self, verbose=False):
@@ -609,24 +622,17 @@ class RGAN:
 
         self.G = Sequential()
         self.G.add(LSTM(depth, input_shape=(self.input_length_dim, 2*self.latent_input_dim),
-                        return_sequences=True,
-                        activation='tanh', recurrent_activation='hard_sigmoid'))
+                        return_sequences=True, activation='tanh', recurrent_activation='hard_sigmoid'))
 
-        if self.thin_model and False:
+        if self.thin_model:
             self.G.add(Dense(depth))
             self.G.add(BatchNormalization(momentum=0.9))
             self.G.add(Activation('relu'))
-            self.G.add(Reshape((self.input_length_dim, 1, depth)))
             self.G.add(Dropout(dropout))
-
-            self.G.add(UpSampling2D(size=(8, 1)))
-            self.G.add(Conv2DTranspose(int(depth/4), 5, padding='same'))
-            self.G.add(BatchNormalization(momentum=0.9))
-            self.G.add(Activation('relu'))
-
-            self.G.add(UpSampling2D(size=(4, 1)))
-            self.G.add(Conv2DTranspose(1, 5, padding='same'))
+            self.G.add(Flatten())
+            self.G.add(Dense(self.input_shape[0]))
             self.G.add(Activation('sigmoid'))
+            self.G.add(Reshape((self.input_shape[0], 1, 1)))
         else:
             self.G.add(LSTM(depth, return_sequences=True,
                             activation='tanh', recurrent_activation='hard_sigmoid'))
@@ -690,6 +696,7 @@ class RGAN:
             for t in range(train_steps):
                 noise = np.random.uniform(-1.0, 1.0,
                                           size=[batch_sz, self.input_length_dim, self.latent_input_dim])
+                # noise = np.zeros((batch_sz, self.input_length_dim, self.latent_input_dim))
                 gen_in = np.empty((batch_sz, self.input_length_dim, 2*self.latent_input_dim))
                 gen_in[:, :, ::2] = x[b:b + batch_sz]
                 gen_in[:, :, 1::2] = noise
@@ -749,7 +756,6 @@ class SimpleLSTM:
         self.net.add(LSTM(depth, input_shape=(self.batch_seq_num, self.input_dim),
                           return_sequences=True, activation='tanh',
                           recurrent_activation='hard_sigmoid'))
-        # self.D.add(LeakyReLU(alpha=0.2))
         self.net.add(LSTM(int(0.5*depth), return_sequences=True,
                           activation='tanh', recurrent_activation='hard_sigmoid'))
 
@@ -757,7 +763,6 @@ class SimpleLSTM:
         self.net.add(BatchNormalization(momentum=0.9))
         self.net.add(Activation('relu'))
         self.net.add(Reshape((self.batch_seq_num, 32, int(depth/32))))
-
         self.net.add(Dense(self.output_dim*4))
 
         # self.net.add(Conv2D(int(0.25*depth), 5, strides=2, padding='same'))
@@ -768,14 +773,14 @@ class SimpleLSTM:
 
         self.net.add(Flatten())
         self.net.add(Dense(self.output_dim, use_bias=True))
-        self.net.add(Activation('sigmoid'))
+        self.net.add(Activation('tanh'))
 
         if self.verbose: self.net.summary()
         return self.net
 
     def buildModel(self):
         if self.net_model: return self.net_model
-        optimizer = RMSprop(lr=0.001, decay=6e-8)
+        optimizer = RMSprop(lr=0.00001, rho=0.9, epsilon=None, decay=0.0) #6e-8)
         self.net_model = Sequential()
         self.net_model.add(self.lstm())
         self.net_model.compile(loss='mean_squared_error', optimizer=optimizer, metrics=['accuracy'])
