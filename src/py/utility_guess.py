@@ -624,7 +624,7 @@ class RGAN:
         self.G.add(LSTM(depth, input_shape=(self.input_length_dim, 2*self.latent_input_dim),
                         return_sequences=True, activation='tanh', recurrent_activation='hard_sigmoid'))
 
-        if self.thin_model:
+        if self.thin_model and False:
             self.G.add(Dense(depth))
             self.G.add(BatchNormalization(momentum=0.9))
             self.G.add(Activation('relu'))
@@ -632,14 +632,13 @@ class RGAN:
             self.G.add(Flatten())
             self.G.add(Dense(self.input_shape[0]))
             self.G.add(Activation('sigmoid'))
-            self.G.add(Reshape((self.input_shape[0], 1, 1)))
         else:
             self.G.add(LSTM(depth, return_sequences=True,
                             activation='tanh', recurrent_activation='hard_sigmoid'))
             self.G.add(Dense(dim*depth))
             self.G.add(BatchNormalization(momentum=0.9))
             self.G.add(Activation('relu'))
-            self.G.add(Reshape((dim, 1, self.input_length_dim*depth)))
+            self.G.add(Reshape((dim, self.input_length_dim*depth)))
             self.G.add(Dropout(dropout))
 
             self.G.add(UpSampling2D(size=(2, 1)))
@@ -698,17 +697,18 @@ class RGAN:
                                           size=[batch_sz, self.input_length_dim, self.latent_input_dim])
                 # noise = np.zeros((batch_sz, self.input_length_dim, self.latent_input_dim))
                 gen_in = np.empty((batch_sz, self.input_length_dim, 2*self.latent_input_dim))
-                gen_in[:, :, ::2] = x[b:b + batch_sz]
-                gen_in[:, :, 1::2] = noise
+                gen_in[:, :, :self.latent_input_dim] = x[b:b + batch_sz]
+                gen_in[:, :, self.latent_input_dim:] = noise
 
-                real = np.zeros((batch_sz, self.input_shape[0], 1, 1))
-                real[:, :, 0, 0] = x_label[b:b + batch_sz]
+                real = np.zeros((batch_sz, self.input_shape[0]))
+                real[:, :] = x_label[b:b + batch_sz]
                 fake = self.GEN.predict(gen_in)
 
+                print(real.shape, fake.shape)
                 x_train = np.concatenate((real, fake))
                 y = np.ones([x_train.shape[0], 1])
                 y[batch_sz:, :] = 0
-
+                # todo label smoothing
                 d_loss = self.DIS.train_on_batch(x_train, y)
 
                 y = np.ones([batch_sz, 1])

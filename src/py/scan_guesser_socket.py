@@ -61,7 +61,7 @@ if __name__ == "__main__":
     print("| -- ScanGuesser test-socket -- |")
     print("| ----------------------------- |\n")
     skt_pkg_scaling = 1000
-    scan_ahead_step = 32
+    scan_ahead_step = 64
     scan_seq_batch = 8
     scan_length = 512
     clip_scans_at = 5.0
