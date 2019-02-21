@@ -94,9 +94,8 @@ class LaserScans:
 
     def reshapeInSequences(self, scans, cmdv, ts, seq_length, seq_step, normalize=None):
         next_scan, pparams, hp = None, None, None
-        if scans.shape[0] < seq_length + seq_step \
-           or scans.shape[0] != cmdv.shape[0] or scans.shape[0] != ts.shape[0]:
-            return next_scan, pparams, hp
+        if cmdv.shape[0] < seq_length + seq_step \
+           or cmdv.shape[0] != ts.shape[0]: return next_scan, pparams, hp
         e_iter = ts.shape[0] - seq_length - seq_step
         n_rows = int(e_iter/seq_length) + 1
         prev_ts  = np.empty((n_rows, seq_length, 1))
@@ -111,7 +110,7 @@ class LaserScans:
             next_ts[row] = ts[n + seq_length:n + seq_length + seq_step]
             prev_cmdv[row] = cmdv[n:n + seq_length]
             next_cmdv[row] = cmdv[n + seq_length:n + seq_length + seq_step]
-            next_scan[row] = scans[n + seq_length + seq_step]
+            if not scans is None: next_scan[row] = scans[n + seq_length + seq_step]
 
         # next_ts[-1] = ts[-self.gen_step_ahead:]
         # next_cmdv[-1] = cmd_vel[-self.gen_step_ahead:]
@@ -356,7 +355,7 @@ class TfPredictor:
         if denormalize is None: self.net_model.predict(x)
         tf = self.net_model.predict(x)
         # denormalize
-        tf[:, :2] *= max_dist
+        tf[:, :2] *= denormalize
         tf[:, 2] *= 2*np.pi
         return tf
 

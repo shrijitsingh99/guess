@@ -61,8 +61,8 @@ if __name__ == "__main__":
     print("| -- ScanGuesser test-socket -- |")
     print("| ----------------------------- |\n")
     skt_pkg_scaling = 1000
-    scan_ahead_step = 64
-    scan_seq_batch = 8
+    scan_seq_size = 8
+    scan_generation_step = 64
     scan_length = 512
     clip_scans_at = 5.0
     module_rate = 1.0/30 # [1/freq]
@@ -70,18 +70,19 @@ if __name__ == "__main__":
     max_dist_proj = max_vel*scan_ahead_step*module_rate # [m]
 
     add_scan = 0 # number of pkg to receive to update
-    guesser = ScanGuesser(scan_length, # original_scan_dim
-                          net_model="lstm",  # default; thin; lstm
-                          scan_batch_sz=scan_seq_batch,  # sequence of scans as input
-                          gen_step_ahead=scan_ahead_step,  # \# of 'scansteps' to look ahead
-                          clip_scans_at=clip_scans_at,  # max beam length [m]
-                          scan_res=0.0085915, scan_fov=4.398848, #(3/2)*np.pi,
+    guesser = ScanGuesser(scan_length, # number of scan beams considered
+                          net_model="conv",  # conv; lstm
                           max_dist_projector=max_dist_proj,
+                          scan_res=0.00653590704, scan_fov=(3/2)*np.pi,
+                          scan_seq_sz=scan_seq_size,  # sequence of scans as input
+                          gen_step=scan_generation_step, # \# of 'scan steps' to look ahead
+                          clip_scans_at=clip_scans_at,  # max beam length [m]
                           ae_fit=True, proj_fit=True, gan_fit=True,
                           # autoencoder
-                          ae_epochs=40, ae_variational=True, ae_convolutional=False,
+                          ae_epochs=20, ae_variational=True, ae_convolutional=False,
                           # gan
-                          gan_batch_sz=16, gan_train_steps=15, start_update_thr=True)
+                          gan_batch_sz=16, gan_train_steps=15,
+                          start_update_thr=True)
     guesser.init(None, init_models=True, init_scan_batch_num=1)
 
     # 6D velocity + timestamp in seconds

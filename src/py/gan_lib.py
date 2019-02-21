@@ -105,7 +105,7 @@ class GAN:
 
     def adversarial_model(self):
         if self.AM: return self.AM
-        optimizer = RMSprop(lr=0.00001, decay=3e-8)
+        optimizer = Adam(lr=0.00001, decay=0.0) #3e-8)
         self.AM = Sequential()
         self.AM.add(self.generator())
         self.AM.add(self.discriminator())
@@ -195,7 +195,7 @@ if __name__ == "__main__":
     scan_to_predict = scan[gan_sequence + gan_pred_step]
 
     gan = GAN(verbose=True)
-    gan.buildModel((ls.originalScansDim(),), (gan_sequence, ae_latent_dim + 6), model_id="lstm")
+    gan.buildModel((ls.originalScansDim(),), (gan_sequence, ae_latent_dim + 6), model_id="conv")
 
     scan_num = int(8192)
     scans = x[:scan_num]
