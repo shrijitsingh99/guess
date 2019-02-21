@@ -45,9 +45,6 @@ class GAN:
 
         self.D.add(Dense(int(depth/4)))
         self.D.add(LeakyReLU(alpha=0.2))
-
-        self.D.add(Dense(int(depth/4)))
-        self.D.add(LeakyReLU(alpha=0.2))
         self.D.add(Dropout(dropout))
 
         self.D.add(Dense(1))
@@ -75,7 +72,7 @@ class GAN:
             self.G.add(Dense(int(self.dis_input_shape[0]/2)))
             self.G.add(LeakyReLU(alpha=0.2))
             self.G.add(Dense(self.dis_input_shape[0]))
-            self.G.add(Activation('sigmoid'))
+            self.G.add(Activation('tanh'))
 
         elif self.model_id == "lstm":
             self.G.add(LSTM(depth, input_shape=self.gen_input_shape,
@@ -94,13 +91,10 @@ class GAN:
             self.G.add(LeakyReLU(alpha=0.2))
             self.G.add(Flatten())
             self.G.add(Dense(self.dis_input_shape[0]))
-            self.G.add(Activation('sigmoid'))
+            self.G.add(Activation('tanh'))
 
         else:
             self.G.add(Dense(int(depth/8), input_shape=self.gen_input_shape))
-            self.G.add(LeakyReLU(alpha=0.2))
-
-            self.G.add(Dense(int(depth/4)))
             self.G.add(LeakyReLU(alpha=0.2))
 
             self.G.add(Dense(int(depth/4)))
@@ -113,7 +107,7 @@ class GAN:
             self.G.add(Dense(int(depth)))
             self.G.add(LeakyReLU(alpha=0.2))
             self.G.add(Dense(self.dis_input_shape[0]))
-            self.G.add(Activation('sigmoid'))
+            self.G.add(Activation('tanh'))
 
         if self.verbose: self.G.summary()
         return self.G
@@ -143,8 +137,8 @@ class GAN:
         for l in net.layers: l.trainable = tr
         return net
 
-    def buildModel(self, dis_input_shape, gen_input_shape, model_id="lstm",
-                   smoothing_factor=0.0, noise_dim=4):
+    def buildModel(self, dis_input_shape, gen_input_shape,
+                   model_id="lstm", smoothing_factor=0.0, noise_dim=4):
         self.noise_dim = noise_dim
         self.dis_input_shape = dis_input_shape
         self.gen_input_shape = (gen_input_shape[0], gen_input_shape[1] + noise_dim)
@@ -176,13 +170,12 @@ class GAN:
                 y[:batch_sz] += 1.0
 
                 if (t % 2) == 0:
-                     self.setTrainable(self.DIS, True)
-                     for i in range(5):
-                         d_loss = self.DIS.train_on_batch(x_train, y)
-                    self.setTrainable(self.DIS, False)
-                 else:
-                     y = np.ones([batch_sz, 1])
-                     a_loss = self.ADV.train_on_batch(xn, y)
+                    # self.setTrainable(self.DIS, True)
+                    for i in range(3): d_loss = self.DIS.train_on_batch(x_train, y)
+                    # self.setTrainable(self.DIS, False)
+                else:
+                    y = np.ones([batch_sz, 1])
+                    a_loss = self.ADV.train_on_batch(xn, y)
 
                 if t == train_steps - 1:
                     ret.append([d_loss[0], d_loss[1], a_loss[0], a_loss[1]])
@@ -243,22 +236,22 @@ if __name__ == "__main__":
     latent = np.concatenate((ae_encoding, cmdv), axis=1)
     in_latent = latent.reshape((int(latent.shape[0]/gan_sequence), gan_sequence, latent.shape[1]))
 
-    in_label = scans[(gan_sequence + gan_pred_step)::gan_sequence, :]
-    # in_label = 2*in_label - 1.0
+    in_label = scans[(gan_sequence + gan_pred_step)::gan_sequence]
+    in_label = 2*in_label - 1.0
     in_latent = in_latent[:in_label.shape[0]]
 
     gan.fitModel(in_latent, in_label, train_steps=30, batch_sz=gan_batch_sz, verbose=True)
     print('-- step 0: Fitting GAN done.\n')
-    gs = gan.generate(latent[:gan_sequence]) # + 1.0
-    ls.plotScan(gs)  # 0.5
+    gs = gan.generate(latent[:gan_sequence]) + 1.0
+    ls.plotScan(0.5*gs)
 
     gan.fitModel(in_latent, in_label, train_steps=30, batch_sz=gan_batch_sz, verbose=True)
     print('-- step 1: Fitting GAN done.\n')
-    gs = gan.generate(latent[:gan_sequence]) # + 1.0
-    ls.plotScan(gs)
+    gs = gan.generate(latent[:gan_sequence]) + 1.0
+    ls.plotScan(0.5*gs)
 
-    gan.fitModel(in_latent, in_label, train_steps=30, batch_sz=gan_batch_sz, verbose=True)
-    print('-- step 2: Fitting GAN done.\n')
-    gs = gan.generate(latent[:gan_sequence]) # + 1.0
-    ls.plotScan(gs)
+    # gan.fitModel(in_latent, in_label, train_steps=30, batch_sz=gan_batch_sz, verbose=True)
+    # print('-- step 2: Fitting GAN done.\n')
+    # gs = gan.generate(latent[:gan_sequence]) + 1.0
+    # ls.plotScan(0.5*gs)
     plt.show()

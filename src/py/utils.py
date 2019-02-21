@@ -214,7 +214,7 @@ class LaserScans:
         segments = self.getScanSegments(scan, 0.99)
         # if self.verbose: print("Segments -- ", np.array(segments).shape, "--", segments)
 
-        plt.figure(figsize=(15, 5))
+        plt.figure(figsize=(7, 3))
         plt.subplot(121)
         y_axis = scan
         if not y is None:

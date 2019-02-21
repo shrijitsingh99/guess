@@ -116,6 +116,7 @@ class ScanGuesser:
         if self.proj_fit:
             p_metrics = self.projector.fitModel(pp, hp, epochs=40)
         if self.gan_fit:
+            next_scan = 2.0*next_scan - 1.0
             g_metrics = self.gan.fitModel(x_latent, next_scan,
                                           train_steps=self.gan_train_steps,
                                           batch_sz=self.gan_batch_sz, verbose=verbose)[-1]
@@ -220,6 +221,7 @@ class ScanGuesser:
         x_latent = latent[:ae_encoded.shape[0]].reshape((n_rows,
                                                          self.scan_seq_sz, self.gan_input_shape[1]))
         gen = self.gan.generate(x_latent)
+        gen = 0.5*(gen + 1.0)
         gen[gen > 0.9] = 0.0
 
         ts = ts.reshape((1, ts.shape[0], 1,))
@@ -303,7 +305,7 @@ if __name__ == "__main__":
     gscan, _, hp = guesser.generateScan(scans, cmdvs, ts)
     # guesser.plotProjection(scan_guessed, gen_params=hp)
 
-    for i in range(10):
+    for i in range(30):
         if guesser.simStep():
             if i == -1:
                 gscan, _, _ = guesser.generateScan(scans, cmdvs, ts)
