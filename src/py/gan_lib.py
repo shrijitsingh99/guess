@@ -161,7 +161,7 @@ class GAN:
         in_shape = (batch_sz, self.gen_input_shape[0], self.gen_input_shape[1])
         for b in range(0, x.shape[0], batch_sz):
             if b + batch_sz > x.shape[0]: continue
-            for t in range(train_steps):
+            for t in range(2*train_steps):
                 noise = np.random.normal(0.0, 1.0, size=(in_shape[0], in_shape[1], self.noise_dim))
                 xn = np.empty(in_shape)
                 xn[:, :, :-self.noise_dim] = x[b:b + batch_sz]
@@ -175,13 +175,12 @@ class GAN:
                 y = np.zeros((2*batch_sz, 1))
                 y[:batch_sz] += 1.0
 
-                 # self.setTrainable(self.DIS, True)
-                 if t%2 == 0:
+                if (t % 2) == 0:
+                     self.setTrainable(self.DIS, True)
                      for i in range(5):
                          d_loss = self.DIS.train_on_batch(x_train, y)
-                # self.setTrainable(self.DIS, False)
+                    self.setTrainable(self.DIS, False)
                  else:
-
                      y = np.ones([batch_sz, 1])
                      a_loss = self.ADV.train_on_batch(xn, y)
 
