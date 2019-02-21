@@ -305,9 +305,9 @@ if __name__ == "__main__":
     gscan, _, hp = guesser.generateScan(scans, cmdvs, ts)
     # guesser.plotProjection(scan_guessed, gen_params=hp)
 
-    for i in range(30):
+    for i in range(50):
         if guesser.simStep():
-            if i == -1:
+            if i % 15 == 0:
                 gscan, _, _ = guesser.generateScan(scans, cmdvs, ts)
                 guesser.plotScan(gscan)
 
