@@ -9,7 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from keras.layers import Dense, Embedding, Activation, Flatten, Reshape
-from keras.layers import Conv2D, Conv2DTranspose, UpSampling2D, LSTM, TimeDistributed
+from keras.layers import Conv1D, Conv2D, Conv2DTranspose, UpSampling2D, LSTM, TimeDistributed
 from keras.layers import LeakyReLU, Dropout
 from keras.layers import BatchNormalization
 from keras.layers import Lambda, Input, Dense
@@ -213,7 +213,7 @@ class LaserScans:
 
         x_axis = np.arange(self.scan_beam_num)
         segments = self.getScanSegments(scan, 0.99)
-        if self.verbose: print("Segments -- ", np.array(segments).shape, "--", segments)
+        # if self.verbose: print("Segments -- ", np.array(segments).shape, "--", segments)
 
         plt.figure(figsize=(15, 5))
         plt.subplot(121)
@@ -268,8 +268,9 @@ class LaserScans:
             plt.plot(pts1[1], pts1[0], label='pred')
         plt.legend()
 
-class SimpleLSTM:
-    def __init__(self, batch_seq_num, input_dim, output_dim, batch_size=32, verbose=False):
+class TfPredictor:
+    def __init__(self, batch_seq_num, input_dim, output_dim,
+                 model_id="conv", batch_size=32, verbose=False):
         self.verbose = verbose
         self.batch_seq_num = batch_seq_num
         self.input_dim = input_dim
@@ -277,6 +278,7 @@ class SimpleLSTM:
         self.batch_size = batch_size
         self.net = None
         self.net_model = None
+        self.model_id = model_id
 
     def lstm(self):
         if self.net: return self.net
@@ -301,11 +303,39 @@ class SimpleLSTM:
         if self.verbose: self.net.summary()
         return self.net
 
+    def conv(self):
+        if self.net: return self.net
+        dropout = 0.4
+        depth = 64+64
+
+        self.net = Sequential()
+        self.net.add(Conv1D(depth, 5, strides=2,
+                            input_shape=(self.batch_seq_num, self.input_dim), padding='same'))
+        # self.net.add(Dense(depth, input_shape=(self.batch_seq_num, self.input_dim)))
+        self.net.add(BatchNormalization(momentum=0.9))
+        self.net.add(Dropout(dropout))
+        self.net.add(LeakyReLU(alpha=0.2))
+        # self.net.add(Dense(int(0.5*depth)))
+        self.net.add(Conv1D(depth*2, 5, strides=2, padding='same'))
+        self.net.add(LeakyReLU(alpha=0.2))
+
+        self.net.add(Dense(int(0.25*depth)))
+        self.net.add(LeakyReLU(alpha=0.2))
+        self.net.add(Flatten())
+        self.net.add(Dense(4*self.output_dim))
+        self.net.add(LeakyReLU(alpha=0.2))
+        self.net.add(Dense(self.output_dim, use_bias=True))
+        self.net.add(Activation('tanh'))
+
+        if self.verbose: self.net.summary()
+        return self.net
+
     def buildModel(self):
         if self.net_model: return self.net_model
         optimizer = RMSprop(lr=0.0001, rho=0.9, epsilon=None, decay=0.0) #6e-8)
         self.net_model = Sequential()
-        self.net_model.add(self.lstm())
+        if self.model_id == "lstm": self.net_model.add(self.lstm())
+        else: self.net_model.add(self.conv())
         self.net_model.compile(
             optimizer=optimizer, loss='mean_squared_error', metrics=['accuracy'])
         return self.net_model
@@ -322,14 +352,21 @@ class SimpleLSTM:
         else: ret = np.array(ret)
         return np.mean(ret, axis=0)
 
-    def predict(self, x):
-        return self.net_model.predict(x)
+    def predict(self, x, denormalize=None):
+        if denormalize is None: self.net_model.predict(x)
+        tf = self.net_model.predict(x)
+        # denormalize
+        tf[:, :2] *= max_dist
+        tf[:, 2] *= 2*np.pi
+        return tf
 
 if __name__ == "__main__":
     batch_sz = 8
     scan_idx = 1000
+    to_show_idx = 100
     scan_ahead_step = 10
-    max_dist = 1.5
+    max_vel = 0.45
+    max_dist = 0.33*scan_ahead_step*max_vel
 
     # DIAG_first_floor.txt
     # diag_labrococo.txt
@@ -344,15 +381,24 @@ if __name__ == "__main__":
     p_cmds = ls.cmdVel()[scan_idx:scan_idx + p_scan_num]
     p_ts = ls.timesteps()[scan_idx:scan_idx + p_scan_num]
 
-    n_scan, lstm_x, lstm_y = ls.reshapeInSequences(p_scans, p_cmds, p_ts,
-                                                   batch_sz, scan_ahead_step, normalize=max_dist)
+    n_scan, tf_x, tf_y = ls.reshapeInSequences(p_scans, p_cmds, p_ts,
+                                               batch_sz, scan_ahead_step, normalize=max_dist)
 
-    lstm = SimpleLSTM(batch_sz, 7, 3, batch_size=32, verbose=False)
-    lstm.buildModel()
-    metrics = lstm.fitModel(lstm_x, lstm_y, epochs=40)
-    print("metrics lstm: [loss acc]", metrics)
+    tfp = TfPredictor(batch_sz, 7, 3, batch_size=32, verbose=True)
+    tfp.buildModel()
 
-    idx = 100
-    y = lstm.predict(lstm_x)
-    ls.plotProjection(p_scans[idx], lstm_y[idx], y[idx])
+    metrics = tfp.fitModel(tf_x, tf_y, epochs=40)
+    print("-- step 0: simple tfp: [loss acc]", metrics)
+    y = tfp.predict(tf_x, denormalize=max_dist)
+    ls.plotProjection(p_scans[to_show_idx], tf_y[to_show_idx], y[to_show_idx])
+
+    metrics = tfp.fitModel(tf_x, tf_y, epochs=40)
+    print("-- step 1: simple tfp: [loss acc]", metrics)
+    y = tfp.predict(tf_x, denormalize=max_dist)
+    ls.plotProjection(p_scans[to_show_idx], tf_y[to_show_idx], y[to_show_idx])
+
+    metrics = tfp.fitModel(tf_x, tf_y, epochs=40)
+    print("-- step 2: simple tfp: [loss acc]", metrics)
+    y = tfp.predict(tf_x, denormalize=max_dist)
+    ls.plotProjection(p_scans[to_show_idx], tf_y[to_show_idx], y[to_show_idx])
     plt.show()
