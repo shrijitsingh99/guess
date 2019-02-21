@@ -277,7 +277,7 @@ if __name__ == "__main__":
     scan_seq_size = 8
     scan_generation_step = 5
     guesser = ScanGuesser(512, # number of scan beams considered
-                          net_model="conv",  # conv; lstm
+                          net_model="afmk",  # conv; lstm
                           scan_res=0.00653590704, scan_fov=(3/2)*np.pi,
                           scan_seq_sz=scan_seq_size,  # sequence of scans as input
                           gen_step=scan_generation_step, # \# of 'scan steps' to look ahead
@@ -301,7 +301,7 @@ if __name__ == "__main__":
     scan_guessed = guesser.getScans()[scan_idx + scan_seq_size + scan_generation_step]
 
     gscan, _, hp = guesser.generateScan(scans, cmdvs, ts)
-    guesser.plotProjection(scan_guessed, gen_params=hp)
+    # guesser.plotProjection(scan_guessed, gen_params=hp)
 
     for i in range(10):
         if guesser.simStep():

@@ -98,7 +98,7 @@ class LaserScans:
            or cmdv.shape[0] != ts.shape[0]: return next_scan, pparams, hp
         e_iter = ts.shape[0] - seq_length - seq_step
         n_rows = int(e_iter/seq_length) + 1
-        prev_ts  = np.empty((n_rows, seq_length, 1))
+        prev_ts = np.empty((n_rows, seq_length, 1))
         prev_cmdv = np.empty((n_rows, seq_length, cmdv.shape[1]))
         next_ts = np.empty((n_rows, seq_step, 1))
         next_cmdv = np.empty((n_rows, seq_step, cmdv.shape[1]))

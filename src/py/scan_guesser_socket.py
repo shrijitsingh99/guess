@@ -67,7 +67,7 @@ if __name__ == "__main__":
     clip_scans_at = 5.0
     module_rate = 1.0/30 # [1/freq]
     max_vel = 0.7  # [m/s]
-    max_dist_proj = max_vel*scan_ahead_step*module_rate # [m]
+    max_dist_proj = max_vel*scan_generation_step*module_rate # [m]
 
     add_scan = 0 # number of pkg to receive to update
     guesser = ScanGuesser(scan_length, # number of scan beams considered
@@ -86,7 +86,7 @@ if __name__ == "__main__":
     guesser.init(None, init_models=True, init_scan_batch_num=1)
 
     # 6D velocity + timestamp in seconds
-    receiver = Receiver((7 + scan_length)*scan_seq_batch, dport=9559)
+    receiver = Receiver((7 + scan_length)*scan_seq_size, dport=9559)
     # generated and decoded scans + generated transform parameters
     provider = Provider(scan_length*2 + 3, dport=9558)
 
@@ -104,11 +104,11 @@ if __name__ == "__main__":
             print("Error", str(e))
             continue
 
-        scan_batch = data_batch_srz[:scan_seq_batch*scan_length]
-        scan_batch = scan_batch.reshape(scan_seq_batch, scan_length)
-        cmdv_batch = data_batch_srz[scan_seq_batch*scan_length:]
-        cmdv_batch = cmdv_batch.reshape(scan_seq_batch, 7)
-        ts_batch = cmdv_batch[:, -1]
+        scan_batch = data_batch_srz[:scan_seq_size*scan_length]
+        scan_batch = scan_batch.reshape(scan_seq_size, scan_length)
+        cmdv_batch = data_batch_srz[scan_seq_size*scan_length:]
+        cmdv_batch = cmdv_batch.reshape(scan_seq_size, 7)
+        ts_batch = cmdv_batch[:, -1:]
         cmdv_batch = cmdv_batch[:, :-1]
 
         if add_scan + 1 == 2 or True:

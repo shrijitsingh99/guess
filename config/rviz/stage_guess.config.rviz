@@ -25,7 +25,7 @@ Panels:
     Experimental: false
     Name: Time
     SyncMode: 0
-    SyncSource: decoded
+    SyncSource: ""
 Visualization Manager:
   Class: ""
   Displays:
@@ -215,7 +215,7 @@ Visualization Manager:
       Marker Topic: /topo_nav_nodes
       Name: nav_nodes
       Namespaces:
-        marker_test_2: true
+        {}
       Queue Size: 100
       Value: true
   Enabled: true
@@ -279,5 +279,5 @@ Window Geometry:
   Views:
     collapsed: true
   Width: 1510
-  X: 2330
-  Y: 442
+  X: 398
+  Y: 24
