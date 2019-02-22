@@ -62,12 +62,13 @@ if __name__ == "__main__":
     print("| ----------------------------- |\n")
     skt_pkg_scaling = 1000
     scan_seq_size = 8
-    scan_generation_step = 5
+    scan_generation_step = 60
     scan_length = 512
     clip_scans_at = 5.0
     module_rate = 1.0/30 # [1/freq]
     max_vel = 0.7  # [m/s]
     max_dist_proj = max_vel*scan_generation_step*module_rate # [m]
+    print("-- max distance projector:", max_dist_proj)
 
     add_scan = 0 # number of pkg to receive to update
     guesser = ScanGuesser(scan_length, # number of scan beams considered
@@ -79,8 +80,8 @@ if __name__ == "__main__":
                           clip_scans_at=clip_scans_at,  # max beam length [m]
                           ae_fit=True, proj_fit=True, gan_fit=True,
                           # autoencoder
-                          ae_epochs=20, ae_variational=True, ae_convolutional=False,
-                          ae_latent_dim=20,
+                          ae_epochs=10, ae_variational=True, ae_convolutional=False,
+                          ae_latent_dim=10,
                           # gan
                           gan_batch_sz=32, gan_train_steps=15, gan_noise_dim=1,
                           start_update_thr=True)
@@ -119,6 +120,7 @@ if __name__ == "__main__":
 
         try:
             gscan, vscan, hp = guesser.generateRawScan(scan_batch, cmdv_batch, ts_batch)
+            hp[2] = 0.0
             to_send = np.concatenate((gscan, vscan[-1]))
             to_send = np.concatenate((to_send, hp))
             provider.send((to_send*skt_pkg_scaling).astype(np.int16))

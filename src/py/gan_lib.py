@@ -109,9 +109,9 @@ class GAN:
 
     def discriminator_model(self):
         if self.DM: return self.DM
-        optimizer = Adam(lr=0.002, beta_1=0.5, decay=3e-8)
         self.DM = Sequential()
         self.DM.add(self.discriminator())
+        optimizer = Adam(lr=0.002, beta_1=0.5, decay=3e-8)
         self.DM.compile(loss='binary_crossentropy',
                         optimizer=optimizer, metrics=['accuracy'])
         return self.DM

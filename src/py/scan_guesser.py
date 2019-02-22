@@ -39,7 +39,7 @@ class ScanGuesser:
         self.gan_train_steps = gan_train_steps
 
         self.online_scans = None
-        self.online_cmd_vel = None
+        self.online_cmdv = None
         self.online_ts = None
         self.sim_step = 0
         self.gan_input_shape = (self.scan_seq_sz, ae_latent_dim + 6)
@@ -62,7 +62,7 @@ class ScanGuesser:
         self.update_mtx = Lock()
         self.updating_model = False
         self.thr_scans = None
-        self.thr_cmd_vel = None
+        self.thr_cmdv = None
         self.thr_ts = None
         if self.start_update_thr: self.thr = Thread(target=self.__updateThr)
 
@@ -73,10 +73,10 @@ class ScanGuesser:
             ts = None
             self.update_mtx.acquire()
             scans = self.thr_scans
-            cmd_vel = self.thr_cmd_vel
+            cmd_vel = self.thr_cmdv
             ts = self.thr_ts
             self.thr_scans = None
-            self.thr_cmd_vel = None
+            self.thr_cmdv = None
             self.thr_ts = None
             self.update_mtx.release()
 
@@ -169,29 +169,28 @@ class ScanGuesser:
         if scans.shape[0] < self.scan_seq_sz: return False
         if self.online_scans is None:
             self.online_scans = scans
-            self.online_cmd_vel = cmd_vel
+            self.online_cmdv = cmd_vel
             self.online_ts = ts
         else:
             self.online_scans = np.concatenate((self.online_scans, scans))
-            self.online_cmd_vel = np.concatenate((self.online_cmd_vel, cmd_vel))
+            self.online_cmdv = np.concatenate((self.online_cmdv, cmd_vel))
             self.online_ts = np.concatenate((self.online_ts, ts))
 
-        min_scan_num = self.gan_batch_sz*self.scan_seq_sz + self.gen_step
-        min_scan_num *= 2
-        # print(self.online_scans.shape[0], min_scan_num)
+        min_scan_num = 2*(self.gan_batch_sz*self.scan_seq_sz) + self.gen_step
         if self.online_scans.shape[0] < min_scan_num: return False
-        rnd_idx = np.random.randint(self.online_scans.shape[0] - min_scan_num + 1)
+        # rnd_idx = np.random.randint(self.online_scans.shape[0] - min_scan_num + 1)
+        rnd_idx = self.online_scans.shape[0] - min_scan_num
 
         if self.start_update_thr:
             self.update_mtx.acquire()
             if not self.updating_model:
                 self.thr_scans = self.online_scans[rnd_idx:rnd_idx + min_scan_num]
-                self.thr_cmd_vel = self.online_cmd_vel[rnd_idx:rnd_idx + min_scan_num]
+                self.thr_cmdv = self.online_cmdv[rnd_idx:rnd_idx + min_scan_num]
                 self.thr_ts = self.online_ts[rnd_idx:rnd_idx + min_scan_num]
             self.update_mtx.release()
         else:
             self.__fitModel(self.online_scans[rnd_idx:rnd_idx + min_scan_num],
-                            self.online_cmd_vel[rnd_idx:rnd_idx + min_scan_num],
+                            self.online_cmdv[rnd_idx:rnd_idx + min_scan_num],
                             self.online_ts[rnd_idx:rnd_idx + min_scan_num],
                             verbose=False)
         return True
@@ -222,7 +221,7 @@ class ScanGuesser:
                                                          self.scan_seq_sz, self.gan_input_shape[1]))
         gen = self.gan.generate(x_latent)
         gen = 0.5*(gen + 1.0)  # tanh denormalize
-         # gen[gen > 0.9] = 0.0
+        gen[gen > 0.9] = 0.0
 
         ts = ts.reshape((1, ts.shape[0], 1,))
         cmd_vel = cmd_vel.reshape((1, cmd_vel.shape[0], cmd_vel.shape[1],))
@@ -246,8 +245,8 @@ class ScanGuesser:
         else: return self.ls.getScans()
 
     def cmdVel(self):
-        if not self.online_cmd_vel is None and self.online_cmd_vel.shape[0] > self.scan_seq_sz:
-            return self.online_cmd_vel
+        if not self.online_cmdv is None and self.online_cmdv.shape[0] > self.scan_seq_sz:
+            return self.online_cmdv
         else: return self.ls.cmdVel()
 
     def timesteps(self):
