@@ -34,6 +34,7 @@ class ScanGuesser:
         self.ae_fit = ae_fit
         self.proj_fit = proj_fit
         self.gan_fit = gan_fit
+        self.interpolate_scans_pts = False
         self.ae_epochs = ae_epochs
         self.gan_batch_sz = gan_batch_sz
         self.gan_train_steps = gan_train_steps
@@ -224,7 +225,8 @@ class ScanGuesser:
                                                          self.scan_seq_sz, self.gan_input_shape[1]))
         gen = self.gan.generate(x_latent)
         gen = 0.5*(gen + 1.0)  # tanh denormalize
-        gen = self.ls.interpolateScanPoints(gen)
+        if self.interpolate_scans_pts:
+            gen = self.ls.interpolateScanPoints(gen)
         gen[gen > 0.9] = 0.0
 
         ts = ts.reshape((1, ts.shape[0], 1,))
@@ -233,7 +235,7 @@ class ScanGuesser:
         hp = self.projector.predict(pparams, denormalize=self.max_dist_projector)[0]
 
         if self.verbose: print("-- Prediction in", timer.elapsed_time())
-        return gen, self.decodeScan(ae_encoded, interpolate=True), hp
+        return gen, self.decodeScan(ae_encoded, interpolate=self.interpolate_scans_pts), hp
 
     def generateRawScan(self, raw_scans, cmd_vel, ts):
         if raw_scans.shape[0] < self.scan_seq_sz: return None
@@ -267,7 +269,7 @@ class ScanGuesser:
 
     def simStep(self):
         print("--- SIMULATE step:",
-              int(self.sim_step/self.scan_seq_sz*self.gan_batch_sz) + 1,
+              int(self.sim_step/(self.scan_seq_sz*self.gan_batch_sz)) + 1,
               "; #sample:", self.sim_step)
         scans_num = self.scan_seq_sz*self.gan_batch_sz + self.gen_step
         scans = self.ls.getScans()[self.sim_step:self.sim_step + scans_num]
