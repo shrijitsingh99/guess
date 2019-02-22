@@ -140,21 +140,21 @@ class AutoEncoder:
                 for i in range(0, x.shape[0] - self.batch_size, self.batch_size):
                     met = self.ae.train_on_batch(x[i:i + self.batch_size], x[i:i + self.batch_size])
                     ret.append(met)
-        self.pencoder.set_weights(self.encoder.get_weights())
-        self.pdecoder.set_weights(self.decoder.get_weights())
+        #self.pencoder.set_weights(self.encoder.get_weights())
+        #self.pdecoder.set_weights(self.decoder.get_weights())
         ret_avgs = np.mean(ret, axis=0)
         return np.array(ret_avgs)
 
     def encode(self, x, batch_size=None):
         if len(x.shape) == 1: x = np.array([x])
         if self.variational:
-            z_mean, _, _ = self.pencoder.predict(x, batch_size=batch_size)
+            z_mean, _, _ = self.encoder.predict(x, batch_size=batch_size)
             return z_mean
         else:
-            return self.pencoder.predict(x, batch_size=batch_size)
+            return self.encoder.predict(x, batch_size=batch_size)
 
     def decode(self, z_mean):
-        return self.pdecoder.predict(z_mean)
+        return self.decoder.predict(z_mean)
 
 if __name__ == "__main__":
     batch_sz = 8

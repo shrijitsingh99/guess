@@ -62,7 +62,7 @@ if __name__ == "__main__":
     print("| ----------------------------- |\n")
     skt_pkg_scaling = 1000
     scan_seq_size = 8
-    scan_generation_step = 64
+    scan_generation_step = 5
     scan_length = 512
     clip_scans_at = 5.0
     module_rate = 1.0/30 # [1/freq]
@@ -71,7 +71,7 @@ if __name__ == "__main__":
 
     add_scan = 0 # number of pkg to receive to update
     guesser = ScanGuesser(scan_length, # number of scan beams considered
-                          net_model="conv",  # conv; lstm
+                          net_model="afmk",  # conv; lstm
                           max_dist_projector=max_dist_proj,
                           scan_res=0.00653590704, scan_fov=(3/2)*np.pi,
                           scan_seq_sz=scan_seq_size,  # sequence of scans as input
@@ -80,8 +80,9 @@ if __name__ == "__main__":
                           ae_fit=True, proj_fit=True, gan_fit=True,
                           # autoencoder
                           ae_epochs=20, ae_variational=True, ae_convolutional=False,
+                          ae_latent_dim=20,
                           # gan
-                          gan_batch_sz=16, gan_train_steps=15,
+                          gan_batch_sz=32, gan_train_steps=10, gan_noise_dim=0,
                           start_update_thr=True)
     guesser.init(None, init_models=True, init_scan_batch_num=1)
 

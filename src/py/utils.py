@@ -56,9 +56,9 @@ class LaserScans:
         self.cmd_vel = self.data[:, 1:7]
         self.scans = self.data[:, 7:]
         if self.verbose:
-            print("timesteps --", self.ts.shape)
-            print("cmd_vel --", self.cmd_vel.shape)
-            print("scans --", self.scans.shape,
+            print("-- [LasersScans] timesteps:", self.ts.shape)
+            print("-- [LasersScans] cmd_vel:", self.cmd_vel.shape)
+            print("-- [LasersScans] scans:", self.scans.shape,
                   "range [", np.min(self.scans), "-", np.max(self.scans), "]")
 
         irange = 0
@@ -77,7 +77,7 @@ class LaserScans:
         self.scans = self.scans[:, irange:irange + self.scan_beam_num]
         if self.verbose:
             r_msg = "[" + str(irange) + "-" + str(irange + self.scan_beam_num) + "]"
-            print("resized scans --", self.scans.shape, r_msg)
+            print("-- [LasersScans] resized scans:", self.scans.shape, r_msg)
 
         if not self.clip_scans_at is None:
             np.clip(self.scans, a_min=0, a_max=self.clip_scans_at, out=self.scans)
@@ -185,8 +185,8 @@ class LaserScans:
         x_train = self.scans[:int(self.scans.shape[0]*split_at), :]
         x_test = self.scans[int(self.scans.shape[0]*split_at):, :]
         if self.verbose:
-            print("scans train:", x_train.shape)
-            print("scans test:", x_test.shape)
+            print("-- [LasersScans] scans train:", x_train.shape)
+            print("-- [LasersScans] scans test:", x_test.shape)
         return x_train, x_test
 
     def getScanSegments(self, scan, threshold):
