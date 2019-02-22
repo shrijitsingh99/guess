@@ -82,7 +82,7 @@ if __name__ == "__main__":
                           ae_epochs=20, ae_variational=True, ae_convolutional=False,
                           ae_latent_dim=20,
                           # gan
-                          gan_batch_sz=32, gan_train_steps=10, gan_noise_dim=0,
+                          gan_batch_sz=32, gan_train_steps=15, gan_noise_dim=1,
                           start_update_thr=True)
     guesser.init(None, init_models=True, init_scan_batch_num=1)
 

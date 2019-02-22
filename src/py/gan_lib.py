@@ -40,14 +40,11 @@ class GAN:
         self.D.add(Dense(depth, input_shape=self.dis_input_shape))
         self.D.add(LeakyReLU(alpha=0.2))
         self.D.add(Dropout(dropout))
-
         self.D.add(Dense(int(depth/2)))
         self.D.add(LeakyReLU(alpha=0.2))
-
         self.D.add(Dense(int(depth/4)))
         self.D.add(LeakyReLU(alpha=0.2))
         self.D.add(Dropout(dropout))
-
         self.D.add(Dense(1))
         self.D.add(Activation('sigmoid'))
         if self.verbose: self.D.summary()
@@ -66,19 +63,15 @@ class GAN:
             self.G.add(LeakyReLU(alpha=0.2))
             self.G.add(Reshape((8, dim, int(depth/dim))))
             self.G.add(Dropout(dropout))
-
             self.G.add(UpSampling2D(size=(2, 1)))
             self.G.add(Conv2DTranspose(int(depth/2), 5, padding='same'))
             self.G.add(LeakyReLU(alpha=0.2))
-
             self.G.add(UpSampling2D(size=(2, 1)))
             self.G.add(Conv2DTranspose(int(depth/4), 5, padding='same'))
             self.G.add(LeakyReLU(alpha=0.2))
-
             self.G.add(UpSampling2D(size=(2, 1)))
             self.G.add(Conv2DTranspose(1, 5, padding='same'))
             self.G.add(Flatten())
-
             self.G.add(Dense(self.dis_input_shape[0]))
             self.G.add(Activation('tanh'))
 
@@ -92,7 +85,6 @@ class GAN:
             self.G.add(BatchNormalization(momentum=0.9))
             self.G.add(LeakyReLU(alpha=0.2))
             self.G.add(Dropout(dropout))
-
             self.G.add(UpSampling1D(4))
             self.G.add(Conv1D(int(depth/4), 5, padding='same'))
             self.G.add(BatchNormalization(momentum=0.9))
@@ -109,8 +101,6 @@ class GAN:
             self.G.add(Dense(int(depth/2)))
             self.G.add(LeakyReLU(alpha=0.2))
             self.G.add(Flatten())
-            # self.G.add(Dense(int(depth)))
-            # self.G.add(LeakyReLU(alpha=0.2))
             self.G.add(Dense(self.dis_input_shape[0]))
             self.G.add(Activation('tanh'))
 
@@ -119,7 +109,7 @@ class GAN:
 
     def discriminator_model(self):
         if self.DM: return self.DM
-        optimizer = Adam(lr=0.001, decay=3e-8)
+        optimizer = Adam(lr=0.002, beta_1=0.5, decay=3e-8)
         self.DM = Sequential()
         self.DM.add(self.discriminator())
         self.DM.compile(loss='binary_crossentropy',
@@ -130,8 +120,10 @@ class GAN:
         if self.AM: return self.AM
         self.AM = Sequential()
         self.AM.add(self.generator())
-        self.AM.add(self.discriminator())
-        optimizer = Adam(lr=0.0001, decay=3e-8)
+        disc = self.discriminator()
+        disc.trainable = False
+        self.AM.add(disc)
+        optimizer = Adam(0.0002, beta_1=0.5, decay=3e-8)
         self.AM.compile(loss='binary_crossentropy',
                         optimizer=optimizer, metrics=['accuracy'])
         if self.verbose: self.AM.summary()
@@ -153,66 +145,69 @@ class GAN:
         self.GEN = self.generator()
         self.ADV = self.adversarial_model()
 
-    def fitModel(self, scans, x_label, train_steps=10, batch_sz=32, verbose=None):
-        assert scans.shape[0] == x_label.shape[0], "wrong input size"
+    def fitModel(self, x, x_label, train_steps=10, batch_sz=32, verbose=None):
+        assert x.shape[0] == x_label.shape[0], "wrong input size"
         if verbose is None: verbose = self.verbose
         ret = []
         in_shape = (batch_sz, self.gen_input_shape[0], self.gen_input_shape[1])
-        for b in range(0, scans.shape[0], batch_sz):
-            if b + batch_sz > scans.shape[0]: continue
-            for t in range(2*train_steps):
+        for b in range(0, x.shape[0], batch_sz):
+            if b + batch_sz > x.shape[0]: continue
+            for t in range(train_steps):
                 xn = np.empty(in_shape)
                 if self.noise_dim > 0:
-                    noise = np.random.normal(0.0, 1.0, size=(in_shape[0], in_shape[1], self.noise_dim))
-                    xn[:, :, :-self.noise_dim] = scans[b:b + batch_sz]
+                    noise = np.random.normal(0.0, 1.0,
+                                             size=(in_shape[0], in_shape[1], self.noise_dim))
+                    xn[:, :, :-self.noise_dim] = x[b:b + batch_sz]
                     xn[:, :, -self.noise_dim:] = noise
                 else:
-                    xn = scans[b:b + batch_sz]
+                    xn = x[b:b + batch_sz]
 
                 real = x_label[b:b + batch_sz]
                 fake = self.GEN.predict(xn)
-                x_train = np.vstack((real, fake))
-
-                # label smoothing [todo]
-                y = np.zeros((2*batch_sz, 1))
-                y[:batch_sz] += 1.0
-
-                if (t % 2) == 0:
-                    # self.setTrainable(self.DIS, True)
-                    for i in range(2): d_loss = self.DIS.train_on_batch(x_train, y)
-                    # self.setTrainable(self.DIS, False)
+                if self.smoothing_factor != 0.0:
+                    real_label = 1.0 - np.random.uniform(0.0, self.smoothing_factor, size=((batch_sz, 1)))
+                    fake_label = np.random.uniform(0.0, self.smoothing_factor, size=((batch_sz, 1)))
                 else:
-                    y = np.ones([batch_sz, 1])
-                    a_loss = self.ADV.train_on_batch(xn, y)
+                    real_label = np.ones((batch_sz, 1))
+                    fake_label = np.zeros((batch_sz, 1))
+
+                # fit discriminator
+                for i in range(2):
+                    d_real_l = self.DIS.train_on_batch(real, real_label)
+                    d_fake_l = self.DIS.train_on_batch(fake, fake_label)
+                    d_loss = 0.5*np.add(d_real_l, d_fake_l)
+
+                # fit generator
+                a_loss = self.ADV.train_on_batch(xn, np.ones((batch_sz, 1)))
 
                 if t == train_steps - 1:
                     ret.append([d_loss[0], d_loss[1], a_loss[0], a_loss[1]])
                     if verbose:
                         log_mesg = "-- %d/%d: [D loss: %f, acc: %f]" % \
-                                   ((b + batch_sz)/batch_sz, scans.shape[0]/batch_sz, d_loss[0], d_loss[1])
+                                   ((b + batch_sz)/batch_sz, x.shape[0]/batch_sz, d_loss[0], d_loss[1])
                         log_mesg = "%s  [A loss: %f, acc: %f]" % (log_mesg, a_loss[0], a_loss[1])
                         print(log_mesg)
-                        sys.stdout.write("\033[F") #back to previous line
-                        sys.stdout.write("\033[K") #clear line
+                        sys.stdout.write("\033[F")
+                        sys.stdout.write("\033[K")
         if verbose: print(log_mesg)
         return np.array(ret)
 
-    def generate(self, scans):
+    def generate(self, x):
         xn = np.empty((1, self.gen_input_shape[0], self.gen_input_shape[1]))
         if self.noise_dim > 0:
             noise = np.random.normal(0.0, 1.0, size=(self.gen_input_shape[0], self.noise_dim))
-            xn[0, :, :-self.noise_dim] = scans
+            xn[0, :, :-self.noise_dim] = x
             xn[0, :, -self.noise_dim:] = noise
             return self.GEN.predict(xn)[0]
         else:
-            xn[0] = scans
+            xn[0] = x
             return self.GEN.predict(xn)[0]
 
 if __name__ == "__main__":
     # params
     scan_idx = 1000
     to_show_idx = 10
-    ae_latent_dim = 20
+    ae_latent_dim = 10
     gan_sequence = 8
     gan_batch_sz = 32
     gan_pred_step = 8

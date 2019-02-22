@@ -57,7 +57,7 @@ class ScanGuesser:
         self.projector.buildModel()
         self.ae.buildModel()
         self.gan.buildModel((self.original_scan_dim,), self.gan_input_shape,
-                            model_id=self.net_model, noise_dim=gan_noise_dim)
+                            smoothing_factor=0.1, noise_dim=gan_noise_dim, model_id=self.net_model)
 
         self.update_mtx = Lock()
         self.updating_model = False
@@ -180,19 +180,19 @@ class ScanGuesser:
         min_scan_num *= 2
         # print(self.online_scans.shape[0], min_scan_num)
         if self.online_scans.shape[0] < min_scan_num: return False
+        rnd_idx = np.random.randint(self.online_scans.shape[0] - min_scan_num + 1)
 
         if self.start_update_thr:
-            if True or self.online_scans.shape[0]%((min_scan_num - self.gen_step))/4 == 0:
-                self.update_mtx.acquire()
-                if not self.updating_model:
-                    self.thr_scans = self.online_scans[-min_scan_num:]
-                    self.thr_cmd_vel = self.online_cmd_vel[-min_scan_num:]
-                    self.thr_ts = self.online_ts[-min_scan_num:]
-                self.update_mtx.release()
+            self.update_mtx.acquire()
+            if not self.updating_model:
+                self.thr_scans = self.online_scans[rnd_idx:rnd_idx + min_scan_num]
+                self.thr_cmd_vel = self.online_cmd_vel[rnd_idx:rnd_idx + min_scan_num]
+                self.thr_ts = self.online_ts[rnd_idx:rnd_idx + min_scan_num]
+            self.update_mtx.release()
         else:
-            self.__fitModel(self.online_scans[-min_scan_num:],
-                            self.online_cmd_vel[-min_scan_num:],
-                            self.online_ts[-min_scan_num:],
+            self.__fitModel(self.online_scans[rnd_idx:rnd_idx + min_scan_num],
+                            self.online_cmd_vel[rnd_idx:rnd_idx + min_scan_num],
+                            self.online_ts[rnd_idx:rnd_idx + min_scan_num],
                             verbose=False)
         return True
 
@@ -285,8 +285,8 @@ if __name__ == "__main__":
                           gen_step=scan_generation_step, # \# of 'scan steps' to look ahead
                           ae_fit=True, proj_fit=True, gan_fit=True,
                           # autoencoder configs
-                          ae_epochs=20, ae_variational=True, ae_convolutional=False,
-                          ae_latent_dim=20,
+                          ae_epochs=10, ae_variational=True, ae_convolutional=False,
+                          ae_latent_dim=10,
                           # gan configs
                           gan_batch_sz=32, gan_train_steps=15, gan_noise_dim=1,
                           start_update_thr=False)
@@ -305,10 +305,10 @@ if __name__ == "__main__":
 
     gscan, _, hp = guesser.generateScan(scans, cmdvs, ts)
 
-    nsteps = 40
+    nsteps = 30
     for i in range(nsteps):
         if guesser.simStep():
-            if i % int(0.5*nsteps) == 0:
+            if i % int(0.3*nsteps) == 0:
                 gscan, _, _ = guesser.generateScan(scans, cmdvs, ts)
                 guesser.plotScan(gscan)
 
