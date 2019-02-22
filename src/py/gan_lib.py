@@ -211,6 +211,7 @@ if __name__ == "__main__":
     gan_sequence = 8
     gan_batch_sz = 32
     gan_pred_step = 8
+    n_steps = 2
 
     # diag_first_floor.txt
     # diag_labrococo.txt
@@ -250,7 +251,7 @@ if __name__ == "__main__":
     in_label = 2*in_label - 1.0
     in_latent = in_latent[:in_label.shape[0]]
 
-    for i in range(10):
+    for i in range(n_steps):
         print('-- step %d: Fitting GAN...' % i)
         gan.fitModel(in_latent, in_label, train_steps=10, batch_sz=gan_batch_sz, verbose=True)
         if i % 3 == 0:

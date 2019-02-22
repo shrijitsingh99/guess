@@ -66,7 +66,7 @@ if __name__ == "__main__":
     scan_length = 512
     clip_scans_at = 5.0
     module_rate = 1.0/30 # [1/freq]
-    max_vel = 0.7  # [m/s]
+    max_vel = 0.55  # [m/s]
     max_dist_proj = max_vel*scan_generation_step*module_rate # [m]
     print("-- max distance projector:", max_dist_proj)
 
@@ -120,7 +120,7 @@ if __name__ == "__main__":
 
         try:
             gscan, vscan, hp = guesser.generateRawScan(scan_batch, cmdv_batch, ts_batch)
-            hp[2] = 0.0
+            # hp[2] = 0.0
             to_send = np.concatenate((gscan, vscan[-1]))
             to_send = np.concatenate((to_send, hp))
             provider.send((to_send*skt_pkg_scaling).astype(np.int16))

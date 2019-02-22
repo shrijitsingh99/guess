@@ -205,8 +205,11 @@ class ScanGuesser:
     def encodeScan(self, scans):
         return self.ae.encode(scans)
 
-    def decodeScan(self, scans_latent):
+    def decodeScan(self, scans_latent, interpolate=False):
         decoded = self.ae.decode(scans_latent)
+        if interpolate:
+            for d in range(decoded.shape[0]):
+                decoded[d] = self.ls.interpolateScanPoints(decoded[d])
         decoded[decoded > 0.9] = 0.0
         return decoded
 
@@ -221,6 +224,7 @@ class ScanGuesser:
                                                          self.scan_seq_sz, self.gan_input_shape[1]))
         gen = self.gan.generate(x_latent)
         gen = 0.5*(gen + 1.0)  # tanh denormalize
+        gen = self.ls.interpolateScanPoints(gen)
         gen[gen > 0.9] = 0.0
 
         ts = ts.reshape((1, ts.shape[0], 1,))
@@ -229,7 +233,7 @@ class ScanGuesser:
         hp = self.projector.predict(pparams, denormalize=self.max_dist_projector)[0]
 
         if self.verbose: print("-- Prediction in", timer.elapsed_time())
-        return gen, self.decodeScan(ae_encoded), hp
+        return gen, self.decodeScan(ae_encoded, interpolate=True), hp
 
     def generateRawScan(self, raw_scans, cmd_vel, ts):
         if raw_scans.shape[0] < self.scan_seq_sz: return None

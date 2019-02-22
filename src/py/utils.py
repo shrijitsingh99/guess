@@ -171,6 +171,12 @@ class LaserScans:
         if self.scans is None: return -1
         return self.scans.shape[1]
 
+    def interpolateScanPoints(self, sp):
+        # calculate polynomial
+        z = np.polyfit(np.arange(sp.shape[0]), sp, deg=9)
+        yp = np.poly1d(z)(np.linspace(0, sp.shape[0], sp.shape[0]))
+        return yp
+
     def timesteps(self):
         if self.ts is None: return np.zeros((1, 1))
         return self.ts
@@ -356,7 +362,7 @@ class TfPredictor:
         tf = self.net_model.predict(x)
         # denormalize
         tf[:, :2] *= denormalize
-        tf[:, 2] *= 2*np.pi
+        tf[:, 2] *= np.pi
         return tf
 
 if __name__ == "__main__":
