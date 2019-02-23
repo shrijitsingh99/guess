@@ -1,9 +1,12 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+import datetime
+import os
+import sys
 import numpy as np
 from threading import Thread, Lock
-from utils import LaserScans, ElapsedTimer, TfPredictor
+from utils import LaserScans, MetricsSaver, ElapsedTimer, TfPredictor
 from autoencoder_lib import AutoEncoder
 from gan_lib import GAN
 import matplotlib.pyplot as plt
@@ -20,7 +23,7 @@ class ScanGuesser:
                  ae_batch_sz=64, ae_latent_dim=10, ae_intermediate_dim=128, ae_epochs=20,
                  # gan configs
                  gan_batch_sz=32, gan_train_steps=5, gan_noise_dim=0,
-                 start_update_thr=False, verbose=False):
+                 start_update_thr=False, verbose=False, run_id=None, metrics_save_rate=100):
         self.start_update_thr = start_update_thr
         self.verbose = verbose
         self.original_scan_dim = original_scan_dim
@@ -39,11 +42,20 @@ class ScanGuesser:
         self.gan_batch_sz = gan_batch_sz
         self.gan_train_steps = gan_train_steps
 
+        self.gan_input_shape = (self.scan_seq_sz, ae_latent_dim + 6)
         self.online_scans = None
         self.online_cmdv = None
         self.online_ts = None
         self.sim_step = 0
-        self.gan_input_shape = (self.scan_seq_sz, ae_latent_dim + 6)
+        self.metrics_step = 0
+        self.metrics_save_rate = metrics_save_rate  # save every steps
+        if not run_id is None:
+            dtn = datetime.datetime.now()
+            dt = str(dtn.month) + "-" + str(dtn.day) + "_" + str(dtn.hour) + "-" + str(dtn.minute)
+            metrics_base_path, _ = os.path.split(os.path.realpath(__file__))
+            metrics_base_path = metrics_base_path + "/../../dataset/metrics/" + run_id + "_" + dt + "_"
+            self.ms = MetricsSaver(metrics_base_path)
+        else: self.ms = None
 
         self.ls = LaserScans(verbose=verbose)
         self.projector = TfPredictor(scan_seq_sz, 7, 3,
@@ -127,11 +139,28 @@ class ScanGuesser:
         timer = ElapsedTimer()
         ae_metrics = self.__updateAE(scans)
         gan_metrics = self.__updateGan(scans, cmd_vel, ts)
-        print("done (\033[1;32m" + timer.elapsed_time() + "\033[0m).")
+        elapsed_secs = timer.secs()
+        print("done (\033[1;32m" + str(elapsed_secs) + "s\033[0m).")
         print("  -- AE loss:", ae_metrics[0], "- acc:", ae_metrics[1])
         print("  -- Proj loss:", gan_metrics[0], "- acc:", gan_metrics[1])
         print("  -- GAN d-loss:", gan_metrics[2], "- d-acc:", gan_metrics[3], end='')
         print(" - a-loss:", gan_metrics[4], "- a-acc:", gan_metrics[5])
+        if not self.ms is None:
+            self.ms.add("ae_mets", ae_metrics)
+            self.ms.add("gan-tf_mets", gan_metrics)
+            self.ms.add("update_time", np.array([elapsed_secs]))
+
+        if self.metrics_step + 1 == self.metrics_save_rate:
+            if not self.ms is None: self.ms.save()
+            self.metrics_step = 0
+        else:
+            self.metrics_step += 1
+            if not self.verbose and elapsed_secs < 5.0:
+                sys.stdout.write("\033[F\033[K")
+                sys.stdout.write("\033[F\033[K")
+                sys.stdout.write("\033[F\033[K")
+                sys.stdout.write("\033[F\033[K")
+
 
     def init(self, raw_scans_file, init_models=False, init_scan_batch_num=None, scan_offset=0):
         print("- Initialize:")
@@ -234,7 +263,7 @@ class ScanGuesser:
         pparams = np.concatenate((cmd_vel, ts), axis=2)
         hp = self.projector.predict(pparams, denormalize=self.max_dist_projector)[0]
 
-        if self.verbose: print("-- Prediction in", timer.elapsed_time())
+        if self.verbose: print("-- Prediction in", timer.secs())
         return gen, self.decodeScan(ae_encoded, interpolate=self.interpolate_scans_pts), hp
 
     def generateRawScan(self, raw_scans, cmd_vel, ts):
@@ -268,9 +297,9 @@ class ScanGuesser:
         self.ls.plotProjection(scan, params0=hm_params, params1=gen_params)
 
     def simStep(self):
-        print("--- SIMULATE step:",
-              int(self.sim_step/(self.scan_seq_sz*self.gan_batch_sz)) + 1,
-              "; #sample:", self.sim_step)
+        # print("--- SIMULATE step:",
+        #       int(self.sim_step/(self.scan_seq_sz*self.gan_batch_sz)) + 1,
+        #       "; #samples:", self.sim_step)
         scans_num = self.scan_seq_sz*self.gan_batch_sz + self.gen_step
         scans = self.ls.getScans()[self.sim_step:self.sim_step + scans_num]
         cmd_vel = self.ls.cmdVel()[self.sim_step:self.sim_step + scans_num]
@@ -294,7 +323,8 @@ if __name__ == "__main__":
                           ae_latent_dim=10,
                           # gan configs
                           gan_batch_sz=32, gan_train_steps=15, gan_noise_dim=1,
-                          start_update_thr=False)
+                          start_update_thr=False, run_id="diag_underground",
+                          metrics_save_rate=20)
 
     # DIAG_first_floor.txt
     # diag_labrococo.txt
@@ -310,10 +340,10 @@ if __name__ == "__main__":
 
     gscan, _, hp = guesser.generateScan(scans, cmdvs, ts)
 
-    nsteps = 30
+    nsteps = 50
     for i in range(nsteps):
         if guesser.simStep():
-            if i % int(0.3*nsteps) == 0:
+            if i % int(0.33*nsteps) == 0:
                 gscan, _, _ = guesser.generateScan(scans, cmdvs, ts)
                 guesser.plotScan(gscan)
 

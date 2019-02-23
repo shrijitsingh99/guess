@@ -187,8 +187,7 @@ class GAN:
                                    ((b + batch_sz)/batch_sz, x.shape[0]/batch_sz, d_loss[0], d_loss[1])
                         log_mesg = "%s  [A loss: %f, acc: %f]" % (log_mesg, a_loss[0], a_loss[1])
                         print(log_mesg)
-                        sys.stdout.write("\033[F")
-                        sys.stdout.write("\033[K")
+                        sys.stdout.write("\033[F\033[K")
         if verbose: print(log_mesg)
         return np.array(ret)
 

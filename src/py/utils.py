@@ -20,7 +20,8 @@ from keras.utils import plot_model
 from keras import backend as K
 
 class MetricsSaver:
-    def __init__(self):
+    def __init__(self, store_path):
+        self.store_path = store_path
         self.met_dict = {}
 
     def add(self, mid, mrow):
@@ -33,20 +34,14 @@ class MetricsSaver:
 
     def save(self):
         for mid, met in self.met_dict.items():
-            np.save(mid, met)
-
+            np.save(self.store_path + mid + ".npy", met)
 
 class ElapsedTimer:
     def __init__(self):
         self.start_time = time.time()
-    def __elapsed(self,sec):
-        if sec < 60:
-            return str(round(sec, 1)) + " sec"
-        elif sec < (60 * 60):
-            return str(int(sec / 60)) + " min"
-        else:
-            return str(int(sec / (60 * 60))) + " hr"
-    def elapsed_time(self):
+    def __elapsed(self, sec):
+        return round(sec, 2)
+    def secs(self):
         return self.__elapsed(time.time() - self.start_time)
 
 class LaserScans:
