@@ -138,11 +138,11 @@ class TopologicalNavigationNode:
         self.mtx.release()
 
     def mapCb(self, data):
+        print "-- Map received"
         if not self.nodes is None:
             self.__publishTopoNodes()
             return
 
-        print "-- Map received"
         img_w, img_h = data.info.width, data.info.height
         ref = np.zeros((img_h, img_w), dtype=np.uint8)
 

@@ -19,6 +19,23 @@ from keras.optimizers import Adam, RMSprop
 from keras.utils import plot_model
 from keras import backend as K
 
+class MetricsSaver:
+    def __init__(self):
+        self.met_dict = {}
+
+    def add(self, mid, mrow):
+        if len(mrow.shape) != 1: return
+        if mid in self.met_dict.keys():
+            if self.met_dict[mid][0].shape != mrow.shape: return
+            self.met_dict[mid] = np.vstack((self.met_dict[mid], mrow))
+        else:
+            self.met_dict[mid] = mrow.reshape(1, mrow.shape[0])
+
+    def save(self):
+        for mid, met in self.met_dict.items():
+            np.save(mid, met)
+
+
 class ElapsedTimer:
     def __init__(self):
         self.start_time = time.time()
@@ -392,18 +409,14 @@ if __name__ == "__main__":
     tfp = TfPredictor(batch_sz, 7, 3, batch_size=32, verbose=True)
     tfp.buildModel()
 
-    metrics = tfp.fitModel(tf_x, tf_y, epochs=40)
-    print("-- step 0: simple tfp: [loss acc]", metrics)
-    y = tfp.predict(tf_x, denormalize=max_dist)
-    ls.plotProjection(p_scans[to_show_idx], tf_y[to_show_idx], y[to_show_idx])
+    ms = MetricsSaver()
 
-    metrics = tfp.fitModel(tf_x, tf_y, epochs=40)
-    print("-- step 1: simple tfp: [loss acc]", metrics)
-    y = tfp.predict(tf_x, denormalize=max_dist)
-    ls.plotProjection(p_scans[to_show_idx], tf_y[to_show_idx], y[to_show_idx])
-
-    metrics = tfp.fitModel(tf_x, tf_y, epochs=40)
-    print("-- step 2: simple tfp: [loss acc]", metrics)
-    y = tfp.predict(tf_x, denormalize=max_dist)
-    ls.plotProjection(p_scans[to_show_idx], tf_y[to_show_idx], y[to_show_idx])
+    nsteps = 3
+    for i in range(nsteps):
+        metrics = tfp.fitModel(tf_x, tf_y, epochs=40)
+        print("-- step %d: simple tfp: [loss acc]" % i, metrics)
+        y = tfp.predict(tf_x, denormalize=max_dist)
+        ls.plotProjection(p_scans[to_show_idx], tf_y[to_show_idx], y[to_show_idx])
+        ms.add("/home/sapienzbot/Desktop/tfprojector.npy", metrics)
+    ms.save()
     plt.show()
