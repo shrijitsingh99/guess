@@ -84,7 +84,8 @@ if __name__ == "__main__":
                           ae_latent_dim=10,
                           # gan
                           gan_batch_sz=32, gan_train_steps=15, gan_noise_dim=1,
-                          start_update_thr=True)
+                          start_update_thr=True, run_id="diag_1floor_enh",
+                          metrics_save_rate=20)
     guesser.init(None, init_models=True, init_scan_batch_num=1)
 
     # 6D velocity + timestamp in seconds

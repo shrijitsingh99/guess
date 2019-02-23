@@ -70,7 +70,7 @@ class ScanGuesser:
         self.projector.buildModel()
         self.ae.buildModel()
         self.gan.buildModel((self.original_scan_dim,), self.gan_input_shape,
-                            smoothing_factor=0.1, noise_dim=gan_noise_dim, model_id=self.net_model)
+                            smoothing_factor=0.0, noise_dim=gan_noise_dim, model_id=self.net_model)
 
         self.update_mtx = Lock()
         self.updating_model = False
