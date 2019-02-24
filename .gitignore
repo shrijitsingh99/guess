@@ -2,6 +2,7 @@ src/py/mnist/
 src/py/mnist_*
 src/py/.ipynb_checkpoints/
 config/world/.ipynb_checkpoints/
+dataset/metrics/pplots/
 src/py/__pycache__/
 build/
 *~

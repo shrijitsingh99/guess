@@ -223,7 +223,7 @@ class LaserScans:
             if d == scan.shape[0] - 1: segments.append([iseg, d, useg])
         return segments
 
-    def plotScan(self, scan, y=None):
+    def plotScan(self, scan, y=None, fig_path=""):
         assert scan.shape[0] == self.scan_beam_num, "Wrong scan size"
         theta = self.scan_res*np.arange(-0.5*self.scan_beam_num, 0.5*self.scan_beam_num)
         theta = theta[::-1]
@@ -232,7 +232,7 @@ class LaserScans:
         segments = self.getScanSegments(scan, 0.99)
         # if self.verbose: print("Segments -- ", np.array(segments).shape, "--", segments)
 
-        plt.figure(figsize=(7, 3))
+        plt.figure(figsize=(10, 5))
         plt.subplot(121)
         y_axis = scan
         if not y is None:
@@ -250,6 +250,8 @@ class LaserScans:
 
         ax = plt.subplot(122, projection='polar')
         ax.set_theta_offset(0.5*np.pi)
+        ax.set_rlabel_position(-180)  # get radial labels away from plotted line
+
         plt.plot(theta, scan, color='lightgray')
         for s in segments:
             if s[2]:
@@ -258,6 +260,7 @@ class LaserScans:
             else:
                 col = '#1f77b4'
                 plt.plot(theta[s[0]:s[1]], scan[s[0]:s[1]], 'o', markersize=0.5, color=col)
+        if fig_path != "": plt.savefig(fig_path, format='pdf')
 
     def plotProjection(self, scan, params0=None, params1=None):
         assert scan.shape[0] == self.scan_beam_num, "Wrong scan size"
