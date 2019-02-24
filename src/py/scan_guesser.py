@@ -148,8 +148,8 @@ class ScanGuesser:
         print("  -- GAN d-loss:", gan_metrics[2], "- d-acc:", gan_metrics[3], end='')
         print(" - a-loss:", gan_metrics[4], "- a-acc:", gan_metrics[5])
         if not self.ms is None:
-            self.ms.add("ae_mets", ae_metrics)
-            self.ms.add("gan-tf_mets", gan_metrics)
+            if self.ae_fit: self.ms.add("ae_mets", ae_metrics)
+            if self.proj_fit or self.gan_fit: self.ms.add("gan-tf_mets", gan_metrics)
             self.ms.add("update_time", np.array([elapsed_secs]))
 
         if self.metrics_step + 1 == self.metrics_save_rate:
@@ -167,8 +167,9 @@ class ScanGuesser:
     def init(self, raw_scans_file, init_models=False, init_batch_num=0, scan_offset=0):
         print("- Initialize:")
 
-        print("-- Init random scans... ", end='')
-        self.ls.initRand(self.gan_batch_sz*self.scan_seq_sz, self.scan_dim,
+        init_scan_num = self.gan_batch_sz*self.scan_seq_sz + self.gen_step
+        print("-- Init %d random scans... " % init_scan_num, end='')
+        self.ls.initRand(init_scan_num, self.scan_dim,
                          self.scan_resolution, self.scan_fov, clip_scans_at=self.clip_scans_at)
         scans = self.ls.getScans()
         cmd_vel = self.ls.cmdVel()
@@ -187,7 +188,6 @@ class ScanGuesser:
                 cmd_vel = np.vstack((cmd_vel, self.ls.cmdVel()))
                 ts = np.vstack((ts, self.ls.timesteps()))
             else:
-                init_scan_num = self.gan_batch_sz*self.scan_seq_sz*init_batch_num + self.gen_step
                 scans = np.vstack((scans, self.ls.getScans()[:init_scan_num]))
                 cmd_vel = np.vstack((cmd_vel, self.ls.cmdVel()[:init_scan_num]))
                 ts = np.vstack((ts, self.ls.timesteps()[:init_scan_num]))
@@ -357,7 +357,7 @@ if __name__ == "__main__":
     gscan, _, _ = guesser.generateScan(scans, cmdvs, ts, clip_max=False)
     guesser.plotScan(gscan, save_fig=(base_path + "it0_gen.pdf"))
 
-    nsteps = 10
+    nsteps = 20
     for i in range(nsteps):
         if guesser.simStep():
             if i % int(0.45*nsteps) == 0:

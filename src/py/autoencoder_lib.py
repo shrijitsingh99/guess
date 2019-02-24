@@ -119,7 +119,7 @@ class AutoEncoder:
             vae_loss = K.mean(reconstruction_loss + kl_loss)
 
             self.ae.add_loss(vae_loss)
-            self.ae.compile(optimizer=Adam(lr=0.0001), metrics=['accuracy'])
+            self.ae.compile(optimizer=Adam(lr=0.00002), metrics=['accuracy'])
         else:
             vae_out = self.decoder(self.encoder(e_in))
             self.ae = Model(e_in, vae_out, name='autoencoder')

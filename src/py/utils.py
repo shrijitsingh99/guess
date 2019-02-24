@@ -352,7 +352,7 @@ class TfPredictor:
 
     def buildModel(self):
         if self.net_model: return self.net_model
-        optimizer = Adam(lr=0.00001) # , rho=0.9, epsilon=None, decay=6e-8)
+        optimizer = Adam(lr=0.0000002) # , rho=0.9, epsilon=None, decay=6e-8)
         self.net_model = Sequential()
         if self.model_id == "lstm": self.net_model.add(self.lstm())
         else: self.net_model.add(self.conv())
