@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+ #!/usr/bin/env python
 # coding: utf-8
 
 import os
@@ -81,7 +81,7 @@ if args.maxit != -1: iter_num = min(iter_num, args.maxit)
 
 def barchart(idx, value, blabel="", bcolor=col_dict["blue"], alpha_ch=0.95):
     bscale = 0.5
-    xts = np.arange(num_confs) - 0.5*num_confs*bscale*bar_width + bscale*bar_width*idx
+    xts = np.arange(1) - 0.5*num_confs*bscale*bar_width + bscale*bar_width*idx
     plt.bar(xts, value[0], 0.9*bscale*bar_width, yerr=value[1],
             color=bcolor, alpha=alpha_ch, align='center',
             edgecolor='black', linewidth=0.07, label=blabel,
@@ -93,12 +93,13 @@ def pplot(value, blabel="",
     plt.plot(value, lw=line_width, linestyle='-', color=col_shade*bcolor,
              marker=bmarker, markersize=marker_sz, markevery=mark_at, label=blabel)
 
-def confPlot(p, xticks=None, title="", y_label="", x_label="\# iter", font_sz=18, xt_step=1, leg_loc='lower right'):
+def confPlot(p, xticks=None, title="", y_label="", x_label="\#iter",
+             font_sz=18, xt_step=1, leg_loc='lower right'):
     font_sz = max(12, font_sz)
     p.legend(loc=leg_loc, fontsize=font_sz - 4, ncol=3)
     p.xlabel(x_label, fontsize=font_sz - 2)
     p.ylabel(r'' + y_label, fontsize=font_sz - 4)
-    p.yticks(fontsize=font_sz - 2)
+    p.yticks(fontsize=font_sz - 4)
     p.title(r'' + title, fontsize=font_sz)
     p.tight_layout()
 
@@ -106,6 +107,8 @@ def confPlot(p, xticks=None, title="", y_label="", x_label="\# iter", font_sz=18
     ax.grid(color='gainsboro', linestyle='--', linewidth=0.1, alpha=0.5)
     ax.set_axisbelow(True)
     ax.ticklabel_format(axis='y', useOffset=False)
+    if x_label == "":
+        ax.set_xticks([], [])
     if not xticks is None:
         ax.set_xticks(xticks[::xt_step] - 0.25*bar_width)
         ax.set_xticklabels([r'' + " " + str(i) for i in xticks[::xt_step]], fontsize=font_sz - 2)
@@ -122,19 +125,21 @@ if len(update_time) != 0:
         # [1:] to remove the first update (initialization update)
         cfg_val = [np.mean(update_time[i][1:iter_num]), np.std(update_time[i][1:iter_num])]
         barchart(i, cfg_val, blabel=conf_names[i], bcolor=col_dict[colors[i]])
-    confPlot(plt, xticks=np.arange(num_confs), title="Update time", y_label="[sec]", leg_loc='upper right')
+    confPlot(plt, title="Update time",
+             y_label="[sec]", x_label="", leg_loc='upper right')
 
 ############################## AutoEncoder
 if len(ae_metrics) != 0:
     plt.figure()
     for i in range(num_confs):
         pplot(ae_metrics[i][:iter_num, 0], blabel=conf_names[i], bcolor=col_dict[colors[i]])
+    cfg_val = [np.mean(update_time[0][1:iter_num]), np.std(update_time[0][1:iter_num])]
     confPlot(plt, title="AutoEncoder", y_label="loss", leg_loc='upper left')
 
-    plt.figure()
-    for i in range(num_confs):
-        pplot(ae_metrics[i][:iter_num, 1], blabel=conf_names[i], bcolor=col_dict[colors[i]])
-    confPlot(plt, title="AutoEncoder", y_label="accuracy", leg_loc='upper left')
+    # plt.figure()
+    # for i in range(num_confs):
+    #     pplot(ae_metrics[i][:iter_num, 1], blabel=conf_names[i], bcolor=col_dict[colors[i]])
+    # confPlot(plt, title="AutoEncoder", y_label="accuracy", leg_loc='upper left')
 
 ############################## TF projector
 if len(gan_metrics) != 0:
