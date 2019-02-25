@@ -15,7 +15,7 @@ from keras.layers import BatchNormalization
 from keras.layers import Lambda, Input, Dense
 from keras.models import Model, Sequential, clone_model
 from keras.losses import mse, binary_crossentropy
-from keras.optimizers import Adam, RMSprop
+from keras.optimizers import Adam, RMSprop, SGD
 from keras.utils import plot_model
 from keras import backend as K
 
@@ -110,37 +110,37 @@ class LaserScans:
            or cmdv.shape[0] != ts.shape[0]: return next_scan, pparams, hp
         e_iter = ts.shape[0] - seq_length - seq_step
         n_rows = int(e_iter/seq_length) + 1
-        prev_ts = np.empty((n_rows, seq_length, 1))
-        prev_cmdv = np.empty((n_rows, seq_length, cmdv.shape[1]))
-        next_ts = np.empty((n_rows, seq_step, 1))
-        next_cmdv = np.empty((n_rows, seq_step, cmdv.shape[1]))
-        next_scan = np.empty((n_rows, scans.shape[1]))
+        prev_ts = 0.33*np.ones((n_rows, seq_length, 1))
+        prev_cmdv = np.zeros((n_rows, seq_length, cmdv.shape[1]))
+        # next_ts = np.empty((n_rows, seq_step, 1))
+        next_cmdv = np.zeros((n_rows, seq_step, cmdv.shape[1]))
+        next_scan = np.zeros((n_rows, scans.shape[1]))
 
         for n in range(0, e_iter, seq_length):
             row = int(n/seq_length)
-            prev_ts[row] = ts[n:n + seq_length]
-            next_ts[row] = ts[n + seq_length:n + seq_length + seq_step]
+            # prev_ts[row] = tb[n]
+            # next_ts[row] = 0.03 # ts[n + seq_length:n + seq_length + seq_step]
             prev_cmdv[row] = cmdv[n:n + seq_length]
             next_cmdv[row] = cmdv[n + seq_length:n + seq_length + seq_step]
             if not scans is None: next_scan[row] = scans[n + seq_length + seq_step]
 
-        # next_ts[-1] = ts[-self.gen_step_ahead:]
-        # next_cmdv[-1] = cmd_vel[-self.gen_step_ahead:]
         pparams = np.concatenate((prev_cmdv, prev_ts), axis=2)
-        _, hp = self.computeTransforms(next_cmdv, next_ts)
+        _, hp = self.computeTransforms(next_cmdv)
         if not normalize is None:
             translation = hp[:, :2]
             np.clip(translation, a_min=-normalize, a_max=normalize, out=translation)
-            # translation normalization [-max_dist, max_dist] -> [0, 1]
+            # translation normalization -> [-1.0, 1.0]
             hp[:, :2] = translation/normalize
-            # theta normalization [-pi, pi] -> [0, 1]
-            hp[:, 2] = hp[:, 2]/(2*np.pi)
+            # theta normalization -> [-1.0, 1.0]
+            hp[:, 2] = hp[:, 2]/np.pi
         return next_scan, pparams, hp
 
-    def computeTransform(self, cmdv, ts):
+    def computeTransform(self, cmdv, ts=None):
         cb, tb = cmdv, np.zeros((cmdv.shape[0],))
-        for t in range(1, ts.shape[0]): tb[t] = ts[t] - ts[t - 1]
-        tstep = max(0.03, np.mean(tb))
+        if not ts is None:
+            for t in range(1, ts.shape[0]): tb[t] = ts[t] - ts[t - 1]
+            tstep = max(0.033, min(0.0, np.mean(tb)))
+        else: tstep = 0.033
         x, y, th = 0.0, 0.0, 0.0
         for n in range(cmdv.shape[0]):
             rk_th = th + 0.5*cb[n, 5]*tstep  # runge-kutta integration
@@ -150,11 +150,11 @@ class LaserScans:
         cth, sth = np.cos(th), np.sin(th)
         return np.array(((cth, -sth, x), (sth, cth, y), (0, 0, 1))), x, y, th
 
-    def computeTransforms(self, cmdv, ts):
+    def computeTransforms(self, cmdv, ts=None):
         hm = np.empty((cmdv.shape[0], 9))
         hp = np.empty((cmdv.shape[0], 3))
         for i in range(cmdv.shape[0]):
-            h, x, y, t = self.computeTransform(cmdv[i], ts[i])
+            h, x, y, t = self.computeTransform(cmdv[i])
             hm[i, :] = h.reshape((9,))
             hp[i, :] = np.array([x, y, t])
         return hm, hp
@@ -262,7 +262,7 @@ class LaserScans:
                 plt.plot(theta[s[0]:s[1]], scan[s[0]:s[1]], 'o', markersize=0.5, color=col)
         if fig_path != "": plt.savefig(fig_path, format='pdf')
 
-    def plotProjection(self, scan, params0=None, params1=None):
+    def plotProjection(self, scan, params0=None, params1=None, fig_path=""):
         assert scan.shape[0] == self.scan_beam_num, "Wrong scan size"
         theta = self.scan_res*np.arange(-0.5*self.scan_beam_num, 0.5*self.scan_beam_num)
         pts = np.ones((3, self.scan_beam_num))
@@ -287,6 +287,7 @@ class LaserScans:
             pts1 = np.matmul(hm, pts)
             plt.plot(pts1[1], pts1[0], label='pred')
         plt.legend()
+        if fig_path != "": plt.savefig(fig_path, format='pdf')
 
 class TfPredictor:
     def __init__(self, batch_seq_num, input_dim, output_dim,
@@ -309,17 +310,11 @@ class TfPredictor:
         self.net.add(LSTM(depth, input_shape=(self.batch_seq_num, self.input_dim),
                           return_sequences=True, activation='tanh',
                           recurrent_activation='hard_sigmoid'))
-        self.net.add(LSTM(int(0.5*depth), return_sequences=True,
-                          activation='tanh', recurrent_activation='hard_sigmoid'))
         self.net.add(Dense(depth))
-        self.net.add(BatchNormalization(momentum=0.9))
-        self.net.add(Activation('relu'))
-        self.net.add(Reshape((self.batch_seq_num, 32, int(depth/32))))
-        self.net.add(Dense(self.output_dim*4))
+        self.net.add(LeakyReLU(alpha=0.2))
         self.net.add(Flatten())
         self.net.add(Dense(self.output_dim, use_bias=True))
         self.net.add(Activation('tanh'))
-
         if self.verbose: self.net.summary()
         return self.net
 
@@ -329,22 +324,23 @@ class TfPredictor:
         depth = 64+64
 
         self.net = Sequential()
-        self.net.add(Conv1D(depth, 5, strides=2,
-                            input_shape=(self.batch_seq_num, self.input_dim), padding='same'))
-        # self.net.add(Dense(depth, input_shape=(self.batch_seq_num, self.input_dim)))
-        self.net.add(BatchNormalization(momentum=0.9))
-        self.net.add(Dropout(dropout))
+        # self.net.add(Conv1D(depth, 5, strides=2,
+        #                     input_shape=(self.batch_seq_num, self.input_dim), padding='same'))
+        self.net.add(Dense(depth, input_shape=(self.batch_seq_num, self.input_dim)))
+        # self.net.add(BatchNormalization(momentum=0.9))
+        # self.net.add(Dropout(dropout))
         self.net.add(LeakyReLU(alpha=0.2))
-        # self.net.add(Dense(int(0.5*depth)))
-        self.net.add(Conv1D(depth*2, 5, strides=2, padding='same'))
+        self.net.add(Dense(int(0.25*depth)))
+        # self.net.add(Conv1D(depth*2, 5, strides=2, padding='same'))
         self.net.add(LeakyReLU(alpha=0.2))
 
-        self.net.add(Dense(int(0.25*depth)))
-        self.net.add(LeakyReLU(alpha=0.2))
+        # self.net.add(Dense(int(0.25*depth)))
+        # self.net.add(LeakyReLU(alpha=0.2))
+
         self.net.add(Flatten())
         self.net.add(Dense(4*self.output_dim))
         self.net.add(LeakyReLU(alpha=0.2))
-        self.net.add(Dense(self.output_dim, use_bias=True))
+        self.net.add(Dense(self.output_dim)) # , use_bias=True
         self.net.add(Activation('tanh'))
 
         if self.verbose: self.net.summary()
@@ -352,7 +348,8 @@ class TfPredictor:
 
     def buildModel(self):
         if self.net_model: return self.net_model
-        optimizer = Adam(lr=0.0000002) # , rho=0.9, epsilon=None, decay=6e-8)
+        # optimizer = Adam(lr=0.00002) # , rho=0.9, epsilon=None, decay=6e-8)
+        optimizer = SGD(lr=0.00002, clipvalue=0.5)
         self.net_model = Sequential()
         if self.model_id == "lstm": self.net_model.add(self.lstm())
         else: self.net_model.add(self.conv())
@@ -376,8 +373,10 @@ class TfPredictor:
         if denormalize is None: self.net_model.predict(x)
         tf = self.net_model.predict(x)
         # denormalize
-        tf[:, :2] *= denormalize
-        tf[:, 2] *= np.pi
+        # todo consider different y velocity, factor 0.18 vx/vy
+        tf[:, :2] = tf[:, :2]*denormalize
+        tf[:, 1] = tf[:, 1]*0.18
+        tf[:, 2] = tf[:, 2]*np.pi*0.01
         return tf
 
 if __name__ == "__main__":

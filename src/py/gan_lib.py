@@ -16,7 +16,7 @@ from keras.layers import LeakyReLU, Dropout, Lambda
 from keras.layers import BatchNormalization, Dense
 from keras.models import Model, Sequential
 from keras.losses import mse, binary_crossentropy
-from keras.optimizers import Adam, RMSprop
+from keras.optimizers import Adam, RMSprop, SGD
 from keras.utils import plot_model
 from keras import backend as K
 
@@ -226,7 +226,7 @@ if __name__ == "__main__":
                      batch_size=128, latent_dim=ae_latent_dim, verbose=False)
     ae.buildModel()
 
-    ae.fitModel(scans[:2000], x_test=None, epochs=10, verbose=0)
+    ae.fitModel(scans[:2000], x_test=None, epochs=40, verbose=0)
     print('-- Fitting VAE model done.')
 
     scans_ae = scans[scan_idx:(scan_idx + gan_sequence*gan_batch_sz)]

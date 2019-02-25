@@ -43,7 +43,7 @@
     <param name="frame_id" value="$(arg global_frame_id)"/>
   </node>
 
-  <node pkg="stage_ros" name="stageros" type="stageros" args="$(arg worldfile)">
+  <node pkg="stage_ros" name="stageros" type="stageros" args="-g $(arg worldfile)">
     <!-- -g headless -->
     <remap from="base_scan" to="$(arg scan_topic)"/>
     <remap from="cmd_vel" to="$(arg cmd_vel_topic)"/>

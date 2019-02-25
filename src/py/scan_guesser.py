@@ -107,11 +107,16 @@ class ScanGuesser:
                 self.update_mtx.release()
         print("-- Terminating update thread.")
 
+    def computeTransform(self, cmdv):
+        _, ref_x, ref_y, ref_th = self.ls.computeTransform(cmdv)
+        return np.array([ref_x, ref_y, ref_th])
+
     def __reshapeGanInput(self, scans, cmd_vel, ts, ae_encoded):
         x_latent = np.concatenate((ae_encoded, cmd_vel), axis=1)
         n_rows = int((ae_encoded.shape[0] - self.scan_seq_sz - self.gen_step)/self.scan_seq_sz) + 1
         x_latent = x_latent[:n_rows*self.scan_seq_sz].\
                    reshape((n_rows, self.scan_seq_sz, self.gan_input_shape[1]))
+
         next_scan, pparams, hp = self.ls.reshapeInSequences(scans, cmd_vel, ts,
                                                             self.scan_seq_sz, self.gen_step,
                                                             normalize=self.max_dist_projector)
@@ -162,7 +167,6 @@ class ScanGuesser:
                 sys.stdout.write("\033[F\033[K")
                 sys.stdout.write("\033[F\033[K")
                 sys.stdout.write("\033[F\033[K")
-
 
     def init(self, raw_scans_file, init_models=False, init_batch_num=0, scan_offset=0):
         print("- Initialize:")
@@ -307,8 +311,26 @@ class ScanGuesser:
         if decoded_scan is None: self.ls.plotScan(scan, fig_path=save_fig)
         else: self.ls.plotScan(scan, decoded_scan, fig_path=save_fig)
 
-    def plotProjection(self, scan, hm_params=None, gen_params=None):
-        self.ls.plotProjection(scan, params0=hm_params, params1=gen_params)
+    def plotProjection(self, scan, hm_params=None, gen_params=None, save_fig=""):
+        self.ls.plotProjection(scan, params0=hm_params, params1=gen_params, fig_path=save_fig)
+
+    def saveFigPrediction(self, file_path):
+        scans_num = self.scan_seq_sz*self.gan_batch_sz + self.gen_step
+        if self.b_scans.shape[0] < scans_num: return
+        scans = self.ls.getScans()[-scans_num:]
+        cmdv = self.ls.cmdVel()[-scans_num:]
+        ts = self.ls.timesteps()[-scans_num:]
+
+        ref_tf = self.computeTransform(cmdv[-self.gen_step:])
+        gscan, dscan, pred_p = self.generateScan(
+            scans[-(self.scan_seq_sz + self.gen_step):-self.gen_step],
+            cmdv[-(self.scan_seq_sz + self.gen_step):-self.gen_step],
+            ts[-(self.scan_seq_sz + self.gen_step):-self.gen_step], clip_max=False)
+
+        self.plotScan(scans[-1], dscan[-1], save_fig=file_path + "target_vae.pdf")
+        self.plotScan(gscan, save_fig=file_path + "gen.pdf")
+        self.plotProjection(scans[-1], hm_params=ref_tf,
+                            gen_params=pred_p, save_fig=file_path + "tf.pdf")
 
     def simStep(self):
         # print("--- SIMULATE step:",
@@ -318,6 +340,7 @@ class ScanGuesser:
         scans = self.ls.getScans()[self.sim_step:self.sim_step + scans_num]
         cmd_vel = self.ls.cmdVel()[self.sim_step:self.sim_step + scans_num]
         ts = self.ls.timesteps()[self.sim_step:self.sim_step + scans_num]
+
 
         self.sim_step = self.sim_step + self.scan_seq_sz*self.gan_batch_sz
         return self.addScans(scans, cmd_vel, ts)
@@ -331,6 +354,7 @@ if __name__ == "__main__":
                           scan_res=0.00653590704, scan_fov=(3/2)*np.pi,
                           scan_seq_sz=scan_seq_size,  # sequence of scans as input
                           gen_step=scan_generation_step, # \# of 'scan steps' to look ahead
+                          max_dist_projector=scan_generation_step*0.03*0.5,
                           ae_fit=True, proj_fit=True, gan_fit=True,
                           # autoencoder configs
                           ae_epochs=10, ae_variational=True, ae_convolutional=False,
@@ -349,25 +373,32 @@ if __name__ == "__main__":
                  init_models=True, init_batch_num=0, scan_offset=6)
 
     scan_idx = 1000
-    scans = guesser.getScans()[scan_idx:scan_idx + scan_seq_size]
-    cmdvs = guesser.cmdVel()[scan_idx:scan_idx + scan_seq_size]
-    ts = guesser.timesteps()[scan_idx:scan_idx + scan_seq_size]
-    scan_guessed = guesser.getScans()[scan_idx + scan_seq_size + scan_generation_step]
+    scan_step = scan_idx+ scan_seq_size
+    scans = guesser.getScans()[scan_idx:scan_step]
+    cmdv = guesser.cmdVel()[scan_idx:scan_step]
+    ts = guesser.timesteps()[scan_idx:scan_step]
+    scan_guessed = guesser.getScans()[scan_step + scan_generation_step]
+    cmdv_guessed = guesser.cmdVel()[scan_step:scan_step + scan_generation_step]
 
-    gscan, _, _ = guesser.generateScan(scans, cmdvs, ts, clip_max=False)
+    gscan, _, _ = guesser.generateScan(scans, cmdv, ts, clip_max=False)
     guesser.plotScan(gscan, save_fig=(base_path + "it0_gen.pdf"))
 
-    nsteps = 20
+    nsteps = 50
     for i in range(nsteps):
         if guesser.simStep():
             if i % int(0.45*nsteps) == 0:
-                gscan, _, _ = guesser.generateScan(scans, cmdvs, ts, clip_max=False)
+                gscan, _, _ = guesser.generateScan(scans, cmdv, ts, clip_max=False)
                 guesser.plotScan(gscan, save_fig=(base_path + "it%d_gen.pdf"%i))
 
-    gscan, dscan, hp = guesser.generateScan(scans, cmdvs, ts, clip_max=False)
+    ref_tf = guesser.computeTransform(cmdv_guessed)
+    print("ref_tf", ref_tf)
+    gscan, dscan, hp = guesser.generateScan(scans, cmdv, ts, clip_max=False)
+    print("gen_tf", hp)
+
     guesser.plotScan(scan_guessed, dscan[0], save_fig=base_path + "t_ae.pdf")
     guesser.plotScan(gscan, save_fig=base_path + "gen.pdf")
-    guesser.plotProjection(scan_guessed, gen_params=hp)
+    guesser.plotProjection(scan_guessed,
+                           gen_params=hp, hm_params=ref_tf, save_fig=base_path + "tf.pdf")
 
     # import matplotlib.pyplot as plt
     # plt.show()
