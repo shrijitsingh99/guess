@@ -25,7 +25,7 @@ Panels:
     Experimental: false
     Name: Time
     SyncMode: 0
-    SyncSource: decoded
+    SyncSource: scan
 Visualization Manager:
   Class: ""
   Displays:
@@ -207,7 +207,7 @@ Visualization Manager:
       Marker Topic: /topo_nodes
       Name: topo_nodes
       Namespaces:
-        marker_test_2: true
+        {}
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray
@@ -215,7 +215,7 @@ Visualization Manager:
       Marker Topic: /topo_nav_nodes
       Name: nav_nodes
       Namespaces:
-        marker_test_2: true
+        {}
       Queue Size: 100
       Value: true
   Enabled: true

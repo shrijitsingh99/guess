@@ -68,15 +68,10 @@ if __name__ == "__main__":
     module_rate = 1.0/30 # [1/freq]
     max_vel = 0.55  # [m/s]
     max_dist_proj = max_vel*scan_generation_step*module_rate # [m]
-    run_id = "diw"
+    rid = "diw"
     save_prediction_rate = 100
-    base_path, _ = os.path.split(os.path.realpath(__file__))
-    base_path = base_path + "/../../dataset/metrics/pplots/" + run_id + "/"
-    if not os.path.isdir(base_path): os.mkdir(base_path)
-
     # print("-- max distance projector:", max_dist_proj)
 
-    m_iters = 0 # number of pkg to receive to update
     guesser = ScanGuesser(scan_length, # number of scan beams considered
                           net_model="afmk",  # conv; lstm
                           max_dist_projector=max_dist_proj,
@@ -90,7 +85,7 @@ if __name__ == "__main__":
                           ae_latent_dim=10,
                           # gan
                           gan_batch_sz=32, gan_train_steps=15, gan_noise_dim=1,
-                          start_update_thr=True, run_id=run_id,
+                          start_update_thr=True, run_id=rid,
                           metrics_save_rate=50)
     guesser.init(None, init_models=True)
 
@@ -121,14 +116,7 @@ if __name__ == "__main__":
         cmdv_batch = cmdv_batch[:, :-1]
 
         guesser.addRawScans(scan_batch, cmdv_batch, ts_batch)
-        m_iters = m_iters + 1
-
         gscan, vscan, hp = guesser.generateRawScan(scan_batch, cmdv_batch, ts_batch)
-
-        if m_iters%save_prediction_rate == 0 and False:
-            print("-- Saving status at #it %d..." % m_iters, end='')
-            guesser.saveFigPrediction(base_path + "it" + str(m_iters) + "_")
-            print(" done.")
 
         try:
             to_send = np.concatenate((gscan, vscan[-1]))

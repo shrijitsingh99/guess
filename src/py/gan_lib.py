@@ -124,7 +124,7 @@ class GAN:
         disc.trainable = False
         self.AM.add(disc)
         optimizer = Adam(0.0002, beta_1=0.5, decay=3e-8)
-        self.AM.compile(loss='binary_crossentropy',
+        self.AM.compile(loss='mse',
                         optimizer=optimizer, metrics=['accuracy'])
         if self.verbose: self.AM.summary()
         return self.AM

@@ -111,10 +111,10 @@ class AutoEncoder:
         if self.variational:
             vae_out = self.decoder(self.encoder(e_in)[2])
             self.ae = Model(e_in, vae_out, name='vae_mlp')
-            reconstruction_loss = binary_crossentropy(e_in, vae_out)
-            reconstruction_loss *= self.original_dim
+            reconstruction_loss = mse(e_in, vae_out) # binary_crossentropy
+            # reconstruction_loss *= self.original_dim
 
-            kl_loss = 1 + self.z_log_var - K.square(self.z_mean) - K.exp(self.z_log_var)
+            kl_loss = 1 + self.z_log_var - K.square(self.z_mean) - K.square(K.exp(self.z_log_var))
             kl_loss = -0.5*K.sum(kl_loss, axis=-1)
             vae_loss = K.mean(reconstruction_loss + kl_loss)
 
