@@ -79,7 +79,7 @@ if __name__ == "__main__":
                           scan_seq_sz=scan_seq_size,  # sequence of scans as input
                           gen_step=scan_generation_step, # \# of 'scan steps' to look ahead
                           clip_scans_at=clip_scans_at,  # max beam length [m]
-                          ae_fit=True, proj_fit=True, gan_fit=True,
+                          ae_fit=True, proj_fit=True, gan_fit=False,
                           # autoencoder
                           ae_epochs=10, ae_variational=True, ae_convolutional=False,
                           ae_latent_dim=10,

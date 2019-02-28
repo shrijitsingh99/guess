@@ -19,8 +19,9 @@ class ScanGuesserNode:
         sv_scan_topic = rospy.get_param('~sv_scan_topic', '/sv_scan')
         self.base_tf = rospy.get_param('~base_tf', 'base_laser_link')
         self.gtf_name = rospy.get_param('~gtf_name', 'gen_tf')
+        self.scan_sz = int(rospy.get_param('~scan_sz', '512'))
         self.scan_batch_sz = int(rospy.get_param('~scan_batch_sz', '8'))
-        self.scan_beam_num = int(rospy.get_param('~scan_beam_num', '512'))
+        self.skt_pkg_scaling = 1000
         self.br = tf.TransformBroadcaster()
 
         self.sg_scan_pub = rospy.Publisher(sg_scan_topic, LaserScan, queue_size=10)
@@ -30,13 +31,12 @@ class ScanGuesserNode:
 
         self.mtx = Lock()
         self.irange = 0
-        self.skt_pkg_scaling = 1000
         cmd_vel_sz = 7  # 6D velocity + timestamp in seconds
         self.cmd_vel = np.zeros((cmd_vel_sz - 1,), dtype=np.float32)
         self.buffer_idx = 0
-        self.data_buffer = np.zeros((self.scan_batch_sz, cmd_vel_sz + self.scan_beam_num))
-        self.provider = Provider(self.scan_batch_sz*(cmd_vel_sz + self.scan_beam_num), dport=9559)
-        self.receiver = Receiver(self.scan_beam_num*2 + 3, dport=9558)
+        self.data_buffer = np.zeros((self.scan_batch_sz, cmd_vel_sz + self.scan_sz))
+        self.provider = Provider(self.scan_batch_sz*(cmd_vel_sz + self.scan_sz), dport=9559)
+        self.receiver = Receiver(self.scan_sz*2 + 3, dport=9558)
         self.set_init_time = False
         self.init_time = rospy.Time.now().to_sec()
 
@@ -46,20 +46,20 @@ class ScanGuesserNode:
             self.init_time = rospy.Time.now().to_sec()
 
         self.mtx.acquire()
-        self.data_buffer[self.buffer_idx, self.scan_beam_num:-1] = self.cmd_vel
+        self.data_buffer[self.buffer_idx, self.scan_sz:-1] = self.cmd_vel
         self.data_buffer[self.buffer_idx, -1] = rospy.Time.now().to_sec() - self.init_time
         self.mtx.release()
         buff_section = self.scan_batch_sz - self.buffer_idx - 1
-        self.irange = int(0.5*(len(data) - self.scan_beam_num))
+        self.irange = int(0.5*(len(data) - self.scan_sz))
 
         self.data_buffer[self.buffer_idx,
-                         :self.scan_beam_num] = data[self.irange:self.irange + self.scan_beam_num]
+                         :self.scan_sz] = data[self.irange:self.irange + self.scan_sz]
         cmdv_batch = np.zeros((self.scan_batch_sz, self.cmd_vel.shape[0] + 1))
-        cmdv_batch[buff_section:] = self.data_buffer[:self.buffer_idx + 1, self.scan_beam_num:]
-        cmdv_batch[:buff_section] = self.data_buffer[self.buffer_idx + 1:, self.scan_beam_num:]
-        scan_batch = np.zeros((self.scan_batch_sz, self.scan_beam_num))
-        scan_batch[buff_section:] = self.data_buffer[:self.buffer_idx + 1, :self.scan_beam_num]
-        scan_batch[:buff_section] = self.data_buffer[self.buffer_idx + 1:, :self.scan_beam_num]
+        cmdv_batch[buff_section:] = self.data_buffer[:self.buffer_idx + 1, self.scan_sz:]
+        cmdv_batch[:buff_section] = self.data_buffer[self.buffer_idx + 1:, self.scan_sz:]
+        scan_batch = np.zeros((self.scan_batch_sz, self.scan_sz))
+        scan_batch[buff_section:] = self.data_buffer[:self.buffer_idx + 1, :self.scan_sz]
+        scan_batch[:buff_section] = self.data_buffer[self.buffer_idx + 1:, :self.scan_sz]
         self.buffer_idx = self.buffer_idx + 1
 
         sreshaped = scan_batch.reshape((scan_batch.shape[0]*scan_batch.shape[1],))
@@ -91,7 +91,7 @@ class ScanGuesserNode:
             sg_tf = sg_data[-3:]
             # sg_tf[2] = 0.0  ## todo remove
             # print "rm:: transform", sg_tf
-            sg_data = sg_data[:-3].reshape((2, self.scan_beam_num))
+            sg_data = sg_data[:-3].reshape((2, self.scan_sz))
 
             self.br.sendTransform((sg_tf[0], sg_tf[1], 0),
                              tf.transformations.quaternion_from_euler(0, 0, sg_tf[2]),

@@ -1,7 +1,7 @@
 #! /usr/bin/env python
 # coding: utf-8
 
-import os
+import os, sys
 import numpy as np
 import random
 import matplotlib.pyplot as plt
@@ -23,27 +23,36 @@ class GuesserSaver:
         scan_topic = rospy.get_param('~scan_topic', '/scan')
         sg_scan_topic = rospy.get_param('~sg_scan_topic', '/sg_scan')
         sv_scan_topic = rospy.get_param('~sv_scan_topic', '/sv_scan')
-        self.scan_seq_sz = int(rospy.get_param('~scan_batch_sz', '8'))
-        self.pred_step = int(rospy.get_param('~prediction_step', '10'))
+        self.scan_sz = int(rospy.get_param('~scan_sz', '512'))
+        self.scan_range = float(rospy.get_param('~scan_range', '5.0'))
+        self.scan_res = 1.3*float(rospy.get_param('~scan_res', '0.00653590704'))
+        self.scan_seq_sz = int(rospy.get_param('~scan_batch_sz', '2'))
+        self.pred_step = int(rospy.get_param('~prediction_step', '2'))
         self.step = 0
 
         self.robot_position = np.zeros((1, 2)).astype(np.float32)
         self.p_path, _ = os.path.split(os.path.realpath(__file__))
-        self.p_path = self.p_path + "/../../../../config/world/metrics/pplots/" + r_id + "/"
-        #if not os.path.isdir(self.p_path): os.mkdir(self.p_path)
+        self.p_path = self.p_path + "/../../../../dataset/metrics/pplots/" + r_id + "/"
+        if not os.path.isdir(self.p_path): os.mkdir(self.p_path)
 
+        self.mtx = Lock()
+        self.rate = rospy.Rate(1) # [hz]
         self.collecting = False
-        self.scan_beam_num = 512
-        self.decoded_sequence = np.zeros((self.scan_seq_sz, self.scan_beam_num))
-        self.generated_scan = np.zeros((1, self.scan_beam_num))
-        self.scan_sequence = np.zeros((self.scan_seq_sz + 1, self.scan_beam_num))
 
-        self.cmd_vel = np.zeros((6,), dtype=np.float32)
+        self.cmdv = np.zeros((1, 2), dtype=np.float32)
+        self.scan = np.zeros((1, self.scan_sz))
+        self.decoded_scan = np.zeros((1, self.scan_sz))
+        self.generated_scan = np.zeros((1, self.scan_sz))
+
+        self.cmdv_sequence = np.zeros((self.scan_seq_sz, 2), dtype=np.float32)
+        self.decoded_sequence = np.zeros((self.scan_seq_sz, self.scan_sz))
+        self.scan_sequence = np.zeros((self.scan_seq_sz + 1, self.scan_sz))
+
         self.tf_listener = tf.TransformListener()
         # self.pose_sub = rospy.Subscriber(pose_topic, PoseWithCovarianceStamped, self.poseCb)
+        # self.gtf_sub = rospy.Subscriber(gtf_topic, PoseStamped, self.getTfCb)
         self.cmd_vel_sub = rospy.Subscriber(cmd_vel_topic, Twist, self.cmdVelCb)
         self.scan_sub = rospy.Subscriber(scan_topic, LaserScan, self.scanCb)
-        # self.tf_sub = rospy.Subscriber(sg_scan_topic, LaserScan, self.scanSvCb)
         self.sg_scan_sub = rospy.Subscriber(sg_scan_topic, LaserScan, self.scanSgCb)
         self.sv_scan_sub = rospy.Subscriber(sv_scan_topic, LaserScan, self.scanSvCb)
 
@@ -51,30 +60,92 @@ class GuesserSaver:
         self.collecting = value
 
     def cmdVelCb(self, data):
-        self.cmd_vel = np.array([data.linear.x, data.linear.y, data.linear.z,
-                                 data.angular.x, data.angular.y, data.angular.z])
+        if self.step > self.scan_seq_sz + self.pred_step: return
+        self.cmdv = np.array([data.linear.x, data.angular.z])
 
     def scanCb(self, data):
-        irange = int(0.5*(len(data.ranges) - self.scan_beam_num))
-        if self.step < self.scan_seq_sz:
-            scan = data.ranges[irange:irange + self.scan_beam_num]
-            self.scan_sequence[self.step, :] = scan
-        self.step += 1
-
-        if self.step == self.scan_seq_sz + self.pred_step:
-            self.collecting = False
+        if self.step > self.scan_seq_sz + self.pred_step: return
+        irange = int(0.5*(len(data.ranges) - self.scan_sz))
+        self.mtx.acquire()
+        self.scan = data.ranges[irange:irange + self.scan_sz]
+        self.mtx.release()
 
     def scanSvCb(self, data):
-        print "scanSvCb", len(data.ranges)
-        self.decoded_sequence[self.step, :] = data.ranges
+        if self.step > self.scan_seq_sz: return
+        self.mtx.acquire()
+        if self.step < self.scan_seq_sz:
+            self.decoded_scan[0, :] = data.ranges
+        self.mtx.release()
 
     def scanSgCb(self, data):
-        print "scanSgCb", len(data.ranges)
+        if self.step > self.scan_seq_sz + 1: return
+        self.mtx.acquire()
+        if self.step == self.scan_seq_sz + 1:
+            if np.sum(self.generated_scan[0, :]) == 0.0:
+                self.generated_scan[0, :] = data.ranges
+        self.mtx.release()
+
+    def save(self):
+        # saving velocity commands
+        vel_file = open(self.p_path + "cmdv_sequence.txt", 'w')
+        for i, cv in enumerate(self.cmdv_sequence):
+            vel_file.write(str(i) + ' ' + str(cv[0]) + ' ' + str(cv[1]) + '\n')
+        vel_file.close()
+
+        # saving tf
+        pp = sgu.computeTransform(self.cmdv_sequence)
+        sgu.plotProjection(self.scan_sequence[-1], self.scan_sz, self.scan_res,
+                           params0=pp, save_path=self.p_path + "ref_tf.pdf")
+
+        # saving decoded scans
+        self.decoded_sequence[self.decoded_sequence == 0] = 5.0
+        sgu.plotScanSequence(self.scan_sequence[:-1], self.decoded_sequence,
+                             self.scan_sz, self.scan_res, self.scan_range,
+                             save_path=self.p_path + "seq_rick")
+
+        # saving generated scans
+        self.generated_scan[self.generated_scan == 0] = 5.0
+        sgu.plotScanSequence(self.scan_sequence[-1:], self.generated_scan,
+                             self.scan_sz, self.scan_res, self.scan_range,
+                             save_path=self.p_path + "gen_rick")
+
 
     def run(self):
         while self.collecting:
-            print "step", self.step
-        print "exited..."
+            if self.step == self.scan_seq_sz + self.pred_step: self.collecting = False
+            if np.sum(self.decoded_scan) == 0.0 or np.sum(self.scan) == 0.0: continue
+            self.rate.sleep()
+
+            self.mtx.acquire()
+            if self.step < self.scan_seq_sz:
+                print "-- Collecting scan %d/%d" % (self.step + 1, self.scan_seq_sz)
+                sys.stdout.write("\033[F\033[K")
+
+                self.cmdv_sequence[self.step, :] = self.cmdv
+                self.scan_sequence[self.step, :] = self.scan
+                self.decoded_sequence[self.step, :] = self.decoded_scan
+
+            elif self.step == self.scan_seq_sz + self.pred_step:
+                self.scan_sequence[-1, :] = self.scan
+            else:
+                print "-- Waiting %d/%d for the generation reference" % \
+                    (self.step + 1, self.scan_seq_sz + self.pred_step)
+                sys.stdout.write("\033[F\033[K")
+
+            self.step += 1
+            self.mtx.release()
+
+            try:
+                r_pose, r_rot = self.tf_listener.lookupTransform('/map',
+                                                                 '/base_laser_link', rospy.Time(0))
+                # print "r_pose, r_rot", r_pose, r_rot
+                # g_trans, g_rot = self.tf_listener.lookupTransform('/base_laser_link',
+                #                                                   '/gen_tf', rospy.Time(0))
+                # print "g_trans, g_rot", g_trans, g_rot
+            except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+                continue
+        self.save()
+        print "-- Guesser saved @", self.p_path
 
 if __name__ == "__main__":
     sgu.println('-- Saving guesser status...')

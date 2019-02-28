@@ -17,7 +17,7 @@ bt=$(tput bold)
 nt=$(tput sgr0)
 
 print_usage() {
-    echo -e "usage: ./guess_ros.sh [<map_name> default:simple_corridor]"
+    echo -e "usage: ./guess_ros.sh [<map_name> default:simple_corridor] [<0/1> spin guesser default:1]"
     echo -e "available maps: simple_corridor - simple_corridor"
 }
 
@@ -42,10 +42,15 @@ wait_sec() {
     echo -e "${bt}$2${nt}${nt}... ${green}done${nc}.${nt}"
 }
 
-if [ $# -lt 1 ]; then
-    map_name=simple_corridor
-else
+# defaults
+spin_guesser=1
+map_name=simple_corridor
+
+if [ $# -gt 0 ]; then
     map_name=$1
+fi
+if [ $# -gt 1 ]; then
+    spin_guesser=$2
 fi
 
 GUESS_ROOT=/home/sapienzbot/ws/guess
@@ -55,8 +60,10 @@ cmd_vel_topic=/cmd_vel
 wait_sec 1 "Launching Guess-stage topological-navigation"
 xterm -hold -e "rosrun scan_guesser_node topological_nav _map_name:=${map_name}" &
 
-wait_sec 3 "Launching Guess-ros-node"
-xterm -hold -e "rosrun scan_guesser_node guesser _cmd_vel_topic:=${cmd_vel_topic}" &
+if [ ${spin_guesser} -eq 1 ]; then
+    wait_sec 3 "Launching Guess-ros-node"
+    xterm -hold -e "rosrun scan_guesser_node guesser _cmd_vel_topic:=${cmd_vel_topic}" &
 
-export PYTHONPATH="/usr/local/:${GUESS_ROOT}/src/py/:/usr/lib/python3/dist-packages/"
-python3 ${pyscript}
+    export PYTHONPATH="/usr/local/:${GUESS_ROOT}/src/py/:/usr/lib/python3/dist-packages/"
+    python3 ${pyscript}
+fi
