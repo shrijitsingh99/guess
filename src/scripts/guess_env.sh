@@ -2,7 +2,7 @@
 
 print_usage() {
     echo -e "usage: ./guess_env.sh [<map_name> default:simple_corridor]"
-    echo -e "available maps: simple_corridor - simple_corridor"
+    echo -e "available maps: simple_corridor - diag_floor_b1"
 }
 
 if [ "$1" == "-h" ] || [ "$1" == "-help" ]; then

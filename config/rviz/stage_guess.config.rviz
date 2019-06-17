@@ -207,7 +207,7 @@ Visualization Manager:
       Marker Topic: /topo_nodes
       Name: topo_nodes
       Namespaces:
-        {}
+        marker_test_2: true
       Queue Size: 100
       Value: true
     - Class: rviz/MarkerArray
@@ -215,9 +215,25 @@ Visualization Manager:
       Marker Topic: /topo_nav_nodes
       Name: nav_nodes
       Namespaces:
-        {}
+        marker_test_2: true
       Queue Size: 100
       Value: true
+    - Class: rviz/MarkerArray
+      Enabled: false
+      Marker Topic: /laser_association
+      Name: laser_association
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: false
+    - Class: rviz/MarkerArray
+      Enabled: false
+      Marker Topic: /latent_association
+      Name: latent_association
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: false
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -261,7 +277,7 @@ Visualization Manager:
       Pitch: 1.56979632
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 4.70857239
+      Yaw: 4.68857288
     Saved: ~
 Window Geometry:
   Displays:
@@ -279,5 +295,5 @@ Window Geometry:
   Views:
     collapsed: true
   Width: 1223
-  X: 697
-  Y: 24
+  X: 2599
+  Y: 456

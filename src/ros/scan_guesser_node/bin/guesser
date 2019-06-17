@@ -6,7 +6,8 @@ from threading import Thread, Lock
 
 import rospy
 import tf
-from geometry_msgs.msg import Twist
+import time
+from geometry_msgs.msg import Twist, Vector3
 from sensor_msgs.msg import LaserScan
 import scan_guesser_node.guesser_utils as sgu
 from scan_guesser_node.guesser_utils import Provider, Receiver
@@ -39,6 +40,8 @@ class ScanGuesserNode:
         self.receiver = Receiver(self.scan_sz*2 + 3, dport=9558)
         self.set_init_time = False
         self.init_time = rospy.Time.now().to_sec()
+        self.tf_listener = tf.TransformListener()
+
 
     def __reshapeData(self, data):
         if not self.set_init_time:
@@ -87,7 +90,7 @@ class ScanGuesserNode:
                 # print "Connection problem... " + str(e)
                 return
 
-            sg_data = self.receiver.getData()*(1.0/self.skt_pkg_scaling)
+            sg_data = self.receiver.getData() * (1./self.skt_pkg_scaling)
             sg_tf = sg_data[-3:]
             # sg_tf[2] = 0.0  ## todo remove
             # print "rm:: transform", sg_tf
@@ -113,6 +116,7 @@ class ScanGuesserNode:
             sg_scan_msg.intensities = []
             sg_scan_msg.header.frame_id = self.gtf_name
             self.sg_scan_pub.publish(sg_scan_msg)
+
 
     def run(self):
         handshake_port = 9550

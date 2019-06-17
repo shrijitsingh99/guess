@@ -48,7 +48,6 @@ class GuesserSaver:
         self.decoded_sequence = np.zeros((self.scan_seq_sz, self.scan_sz))
         self.scan_sequence = np.zeros((self.scan_seq_sz + 1, self.scan_sz))
 
-        self.tf_listener = tf.TransformListener()
         # self.pose_sub = rospy.Subscriber(pose_topic, PoseWithCovarianceStamped, self.poseCb)
         # self.gtf_sub = rospy.Subscriber(gtf_topic, PoseStamped, self.getTfCb)
         self.cmd_vel_sub = rospy.Subscriber(cmd_vel_topic, Twist, self.cmdVelCb)
@@ -135,15 +134,6 @@ class GuesserSaver:
             self.step += 1
             self.mtx.release()
 
-            try:
-                r_pose, r_rot = self.tf_listener.lookupTransform('/map',
-                                                                 '/base_laser_link', rospy.Time(0))
-                # print "r_pose, r_rot", r_pose, r_rot
-                # g_trans, g_rot = self.tf_listener.lookupTransform('/base_laser_link',
-                #                                                   '/gen_tf', rospy.Time(0))
-                # print "g_trans, g_rot", g_trans, g_rot
-            except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
-                continue
         self.save()
         print "-- Guesser saved @", self.p_path
 
