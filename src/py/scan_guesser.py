@@ -154,6 +154,7 @@ class ScanGuesser:
         print("  -- Proj loss:", gan_metrics[0], "- acc:", gan_metrics[1])
         print("  -- GAN d-loss:", gan_metrics[2], "- d-acc:", gan_metrics[3], end='')
         print(" - a-loss:", gan_metrics[4], "- a-acc:", gan_metrics[5])
+
         if not self.ms is None:
             if self.ae_fit: self.ms.add("ae_mets", ae_metrics)
             if self.proj_fit or self.gan_fit: self.ms.add("gan-tf_mets", gan_metrics)

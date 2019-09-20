@@ -123,8 +123,8 @@ class GuesserSaver:
 
             self.mtx.acquire()
             if self.step < self.scan_seq_sz:
-                print "-- Collecting scan %d/%d -- sec:%d" % (self.step + 1, self.scan_seq_sz,
-                                                              c)
+                print "-- Collecting scan %d/%d -- sec: %d" % (self.step + 1, self.scan_seq_sz,
+                                                               self.timestep)
                 sys.stdout.write("\033[F\033[K")
 
                 self.cmdv_sequence[self.step, :] = self.cmdv
@@ -135,7 +135,7 @@ class GuesserSaver:
             elif self.step == self.scan_seq_sz + self.pred_step:
                 self.scan_sequence[-1, :] = self.scan
             else:
-                print "-- Waiting %d/%d for scan reference collection -- sec:" % \
+                print "-- Waiting %d/%d for scan reference collection -- sec: %d" % \
                     (self.step + 1, self.scan_seq_sz + self.pred_step, self.timestep)
                 sys.stdout.write("\033[F\033[K")
 
