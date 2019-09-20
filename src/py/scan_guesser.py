@@ -19,7 +19,7 @@ class ScanGuesser:
                  gen_step=1, max_dist_projector=1.0,
                  buffer_max_sz=20,
                  ae_fit=True, proj_fit=True, gan_fit=True,
-                 # autoencoder configs
+                 # ae configs
                  ae_variational=True, ae_convolutional=False,
                  ae_batch_sz=64, ae_latent_dim=10, ae_intermediate_dim=128, ae_epochs=20,
                  # gan configs
@@ -51,13 +51,15 @@ class ScanGuesser:
         self.sim_step = 0
         self.metrics_step = 0
         self.metrics_save_rate = metrics_save_rate  # save every steps
+
         if not run_id is None:
             dtn = datetime.datetime.now()
             dt = str(dtn.month) + "-" + str(dtn.day) + "_" + str(dtn.hour) + "-" + str(dtn.minute)
             metrics_base_path, _ = os.path.split(os.path.realpath(__file__))
             metrics_base_path = metrics_base_path + "/../../dataset/metrics/" + run_id + "_" + dt + "_"
             self.ms = MetricsSaver(metrics_base_path)
-        else: self.ms = None
+        else:
+            self.ms = None
 
         self.ls = LaserScans(verbose=verbose)
         self.projector = TfPredictor(scan_seq_sz, 7, 3,
@@ -170,11 +172,9 @@ class ScanGuesser:
 
     def init(self, raw_scans_file, init_models=False, init_batch_num=0, scan_offset=0):
         print("- Initialize:")
-
         init_scan_num = self.gan_batch_sz*self.scan_seq_sz + self.gen_step
         print("-- Init %d random scans... " % init_scan_num, end='')
-        self.ls.initRand(init_scan_num, self.scan_dim,
-                         self.scan_resolution, self.scan_fov, clip_scans_at=self.clip_scans_at)
+        self.ls.initRand(init_scan_num, self.scan_dim, self.scan_resolution, self.scan_fov, clip_scans_at=self.clip_scans_at)
         scans = self.ls.getScans()
         cmd_vel = self.ls.cmdVel()
         ts = self.ls.timesteps()
@@ -281,8 +281,7 @@ class ScanGuesser:
         hp = self.projector.predict(pparams, denormalize=self.max_dist_projector)[0]
 
         if self.verbose: print("-- Prediction in", timer.secs())
-        return gen, self.decodeScan(ae_encoded, clip_max=clip_max,
-                                    interpolate=self.interpolate_scans_pts), hp
+        return gen, self.decodeScan(ae_encoded, clip_max=clip_max, interpolate=self.interpolate_scans_pts), hp
 
     def generateRawScan(self, raw_scans, cmd_vel, ts):
         if raw_scans.shape[0] < self.scan_seq_sz: return None
@@ -333,15 +332,10 @@ class ScanGuesser:
                             gen_params=pred_p, save_fig=file_path + "tf.pdf")
 
     def simStep(self):
-        # print("--- SIMULATE step:",
-        #       int(self.sim_step/(self.scan_seq_sz*self.gan_batch_sz)) + 1,
-        #       "; #samples:", self.sim_step)
         scans_num = self.scan_seq_sz*self.gan_batch_sz + self.gen_step
         scans = self.ls.getScans()[self.sim_step:self.sim_step + scans_num]
         cmd_vel = self.ls.cmdVel()[self.sim_step:self.sim_step + scans_num]
         ts = self.ls.timesteps()[self.sim_step:self.sim_step + scans_num]
-
-
         self.sim_step = self.sim_step + self.scan_seq_sz*self.gan_batch_sz
         return self.addScans(scans, cmd_vel, ts)
 

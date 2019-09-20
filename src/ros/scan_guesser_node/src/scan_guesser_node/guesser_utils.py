@@ -1,14 +1,17 @@
 
 import socket
-import numpy as np
+
 import matplotlib.pyplot as plt
+import numpy as np
+
 
 def println(name):
     print name
 
+
 def computeTransform(cmdv):
     x, y, th = 0.0, 0.0, 0.0
-    v, om, tstep = cmdv[0, :], cmdv[1, :], 0.033
+    v, om, tstep = cmdv[:, 0], cmdv[:, 1], 0.033
 
     for n in range(cmdv.shape[0]):
         rk_th = th + 0.5*om[n]*tstep  # runge-kutta integration
@@ -16,6 +19,7 @@ def computeTransform(cmdv):
         y = y + v[n]*np.sin(rk_th)*tstep
         th = th + om[n]*tstep
     return x, y, th
+
 
 def plotProjection(scan, scan_sz, scan_res, params0, params1=None, save_path=""):
     assert scan.shape[0] == scan_sz, "Wrong scan size"
@@ -44,6 +48,7 @@ def plotProjection(scan, scan_sz, scan_res, params0, params1=None, save_path="")
     plt.legend()
     if save_path != "": plt.savefig(save_path, format='pdf')
 
+
 def getScanSegments(scan, threshold):
     segments = []
     iseg = 0
@@ -60,6 +65,7 @@ def getScanSegments(scan, threshold):
         if d == scan.shape[0] - 1: segments.append([iseg, d, useg])
     return segments
 
+
 def plotScan(ax, theta, scan, scan_range, sub_title):
     ax.set_theta_offset(0.5*np.pi)
     # ax.set_rmax(scan_range*1.1)
@@ -72,7 +78,8 @@ def plotScan(ax, theta, scan, scan_range, sub_title):
                 color=col, marker='.', markersize=0.5, lw=2)
     ax.set_title(sub_title, va='bottom')
 
-def plotScanSequence(scans, dscans, scan_sz, scan_res, scan_range, save_path=""):
+
+def plotScanSequence(scans, dscans, scan_sz, scan_res, scan_range, name, save_path=""):
     assert scans.shape[1] == scan_sz, "Wrong scans size"
     assert dscans.shape[1] == scan_sz, "Wrong scans size"
     theta = scan_res*np.arange(-0.5*scan_sz, 0.5*scan_sz)
@@ -83,10 +90,12 @@ def plotScanSequence(scans, dscans, scan_sz, scan_res, scan_range, save_path="")
         fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(8, 4),
                                  subplot_kw=dict(polar=True))
         plotScan(axes[0], theta, scans[s], scan_range, sub_title='Laser scan')
-        plotScan(axes[1], theta, dscans[s], scan_range, sub_title='VAE decoded scan')
-        if save_path != "": plt.savefig(save_path + "-" + str(s) + ".pdf", format='pdf')
+        plotScan(axes[1], theta, dscans[s], scan_range, sub_title=name)
+        if save_path != "": plt.savefig(save_path + '.pdf', format='pdf')
+
 
 __all__ = ['Provider', 'Receiver']
+
 
 class Provider:
     def __init__(self, data_length, dip="127.0.0.1", dport=9559):
@@ -108,6 +117,7 @@ class Provider:
         srz_data = np.array(data).tostring()
         self.socket.sendall(srz_data)
         self.socket.close()
+
 
 class Receiver:
     def __init__(self, data_length, dip="127.0.0.1", dport=9559):

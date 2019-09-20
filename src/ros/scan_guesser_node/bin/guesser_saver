@@ -33,20 +33,23 @@ class GuesserSaver:
         self.robot_position = np.zeros((1, 2)).astype(np.float32)
         self.p_path, _ = os.path.split(os.path.realpath(__file__))
         self.p_path = self.p_path + "/../../../../dataset/metrics/pplots/" + r_id + "/"
-        if not os.path.isdir(self.p_path): os.mkdir(self.p_path)
+        if not os.path.isdir(self.p_path):
+            os.mkdir(self.p_path)
 
         self.mtx = Lock()
         self.rate = rospy.Rate(1) # [hz]
         self.collecting = False
 
         self.cmdv = np.zeros((1, 2), dtype=np.float32)
-        self.scan = np.zeros((1, self.scan_sz))
-        self.decoded_scan = np.zeros((1, self.scan_sz))
-        self.generated_scan = np.zeros((1, self.scan_sz))
+        self.scan = np.zeros((1, self.scan_sz), dtype=np.float32)
+        self.decoded_scan = np.zeros((1, self.scan_sz), dtype=np.float32)
+        self.generated_scan = np.zeros((1, self.scan_sz), dtype=np.float32)
+        self.timestep = .0
 
         self.cmdv_sequence = np.zeros((self.scan_seq_sz, 2), dtype=np.float32)
-        self.decoded_sequence = np.zeros((self.scan_seq_sz, self.scan_sz))
-        self.scan_sequence = np.zeros((self.scan_seq_sz + 1, self.scan_sz))
+        self.decoded_sequence = np.zeros((self.scan_seq_sz, self.scan_sz), dtype=np.float32)
+        self.scan_sequence = np.zeros((self.scan_seq_sz + 1, self.scan_sz), dtype=np.float32)
+        self.timesteps = np.zeros((self.scan_seq_sz, 1), dtype=np.float32)
 
         # self.pose_sub = rospy.Subscriber(pose_topic, PoseWithCovarianceStamped, self.poseCb)
         # self.gtf_sub = rospy.Subscriber(gtf_topic, PoseStamped, self.getTfCb)
@@ -67,6 +70,7 @@ class GuesserSaver:
         irange = int(0.5*(len(data.ranges) - self.scan_sz))
         self.mtx.acquire()
         self.scan = data.ranges[irange:irange + self.scan_sz]
+        self.timestep = data.header.stamp.secs
         self.mtx.release()
 
     def scanSvCb(self, data):
@@ -93,42 +97,46 @@ class GuesserSaver:
 
         # saving tf
         pp = sgu.computeTransform(self.cmdv_sequence)
-        sgu.plotProjection(self.scan_sequence[-1], self.scan_sz, self.scan_res,
-                           params0=pp, save_path=self.p_path + "ref_tf.pdf")
+        sgu.plotProjection(self.scan_sequence[-1], self.scan_sz, self.scan_res, params0=pp,
+                           save_path=os.path.join(self.p_path, 'tf-t%d.pdf' % self.timesteps[-1]))
 
         # saving decoded scans
         self.decoded_sequence[self.decoded_sequence == 0] = 5.0
-        sgu.plotScanSequence(self.scan_sequence[:-1], self.decoded_sequence,
-                             self.scan_sz, self.scan_res, self.scan_range,
-                             save_path=self.p_path + "seq_rick")
+        sgu.plotScanSequence(self.scan_sequence[:1], self.decoded_sequence,
+                             self.scan_sz, self.scan_res, self.scan_range, name='VAE decoded scan',
+                             save_path=os.path.join(self.p_path, 'vae-scan-t%d' % self.timesteps[0]))
 
         # saving generated scans
         self.generated_scan[self.generated_scan == 0] = 5.0
         sgu.plotScanSequence(self.scan_sequence[-1:], self.generated_scan,
-                             self.scan_sz, self.scan_res, self.scan_range,
-                             save_path=self.p_path + "gen_rick")
+                             self.scan_sz, self.scan_res, self.scan_range, name='GAN generated scan',
+                             save_path=os.path.join(self.p_path, 'gan-scan-t%d' % self.timesteps[-1]))
 
 
     def run(self):
         while self.collecting:
-            if self.step == self.scan_seq_sz + self.pred_step: self.collecting = False
-            if np.sum(self.decoded_scan) == 0.0 or np.sum(self.scan) == 0.0: continue
+            if self.step == self.scan_seq_sz + self.pred_step:
+                self.collecting = False
+            if np.sum(self.decoded_scan) == 0.0 or np.sum(self.scan) == 0.0:
+                continue
             self.rate.sleep()
 
             self.mtx.acquire()
             if self.step < self.scan_seq_sz:
-                print "-- Collecting scan %d/%d" % (self.step + 1, self.scan_seq_sz)
+                print "-- Collecting scan %d/%d -- sec:%d" % (self.step + 1, self.scan_seq_sz,
+                                                              c)
                 sys.stdout.write("\033[F\033[K")
 
                 self.cmdv_sequence[self.step, :] = self.cmdv
                 self.scan_sequence[self.step, :] = self.scan
                 self.decoded_sequence[self.step, :] = self.decoded_scan
+                self.timesteps[self.step] = self.timestep
 
             elif self.step == self.scan_seq_sz + self.pred_step:
                 self.scan_sequence[-1, :] = self.scan
             else:
-                print "-- Waiting %d/%d for the generation reference" % \
-                    (self.step + 1, self.scan_seq_sz + self.pred_step)
+                print "-- Waiting %d/%d for scan reference collection -- sec:" % \
+                    (self.step + 1, self.scan_seq_sz + self.pred_step, self.timestep)
                 sys.stdout.write("\033[F\033[K")
 
             self.step += 1
