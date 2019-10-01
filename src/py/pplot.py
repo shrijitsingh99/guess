@@ -51,33 +51,26 @@ base_path = base_path + "/../../dataset/metrics/"
 if args.ls:
     mets_list = os.listdir(base_path)
     print("\n-- listing:")
-    for m in mets_list:
-        if fnmatch.fnmatch(m, '*_update_time.npy'):
-            m = m.replace("_update_time.npy", "")
-            print(m)
+    for i, m in enumerate(mets_list):
+        if os.path.isdir(os.path.join(base_path, m)):
+            print ' -', m
     exit()
 
 num_confs = len(args.rid)
 bar_width = 1.0/num_confs
-if len(args.name) == 0:
-    conf_names = [r'' + "Cfg." + str(i) for i in range(num_confs)]
-else:
-    conf_names = args.name
+conf_names = [r'' + "Cfg." + str(i) for i in range(num_confs)] \
+             if len(args.name) == 0 else args.name
 assert len(conf_names) == num_confs, "input dimensions mismatch"
 
-ae_metrics = []
-gan_metrics = []
-update_time = []
-for m in args.rid:
-    if os.path.isfile(base_path + m + "_ae_mets.npy"):
-        ae_metrics.append(np.load(base_path + m + "_ae_mets.npy"))
-    if os.path.isfile(base_path + m + "_gan-tf_mets.npy"):
-        gan_metrics.append(np.load(base_path + m + "_gan-tf_mets.npy"))
-    if os.path.isfile(base_path + m + "_update_time.npy"):
-        update_time.append(np.load(base_path + m + "_update_time.npy")[:, 0])
-iter_num = [update_time[i].shape[0] for i in range(len(update_time))]
-iter_num = min(iter_num)
-if args.maxit != -1: iter_num = min(iter_num, args.maxit)
+ae_metrics = [np.load(base_path + m + "/ae_mets.npy") for m in args.rid
+              if os.path.isfile(base_path + m + "/ae_mets.npy")]
+gan_metrics = [np.load(base_path + m + "/gan-tf_mets.npy") for m in args.rid
+               if os.path.isfile(base_path + m + "/gan-tf_mets.npy")]
+update_time = [np.load(base_path + m + "/update_time.npy")[:, 0] for m in args.rid
+               if os.path.isfile(base_path + m + "/update_time.npy")]
+iter_num = min([x.shape[0] for x in update_time])
+iter_num = min(iter_num, args.maxit) if args.maxit != -1 else iter_num
+
 
 def barchart(idx, value, blabel="", bcolor=col_dict["blue"], alpha_ch=0.95):
     bscale = 0.5
@@ -87,11 +80,12 @@ def barchart(idx, value, blabel="", bcolor=col_dict["blue"], alpha_ch=0.95):
             edgecolor='black', linewidth=0.07, label=blabel,
             error_kw=dict(ecolor=0.8*bcolor, lw=1, capsize=5, capthick=2))
 
-def pplot(value, blabel="",
-          bcolor=col_dict["blue"], col_shade=0.9, line_width=1.2,
+
+def pplot(value, blabel="", bcolor=col_dict["blue"], col_shade=0.9, line_width=1.2,
           bmarker=markers[0], marker_sz=7, mark_at=50):
     plt.plot(value, lw=line_width, linestyle='-', color=col_shade*bcolor,
              marker=bmarker, markersize=marker_sz, markevery=mark_at, label=blabel)
+
 
 def confPlot(p, xticks=None, title="", y_label="", x_label="\#iter",
              font_sz=18, xt_step=1, leg_loc='lower right'):
@@ -107,11 +101,14 @@ def confPlot(p, xticks=None, title="", y_label="", x_label="\#iter",
     ax.grid(color='gainsboro', linestyle='--', linewidth=0.1, alpha=0.5)
     ax.set_axisbelow(True)
     ax.ticklabel_format(axis='y', useOffset=False)
+
     if x_label == "":
         ax.set_xticks([], [])
-    if not xticks is None:
+
+    if xticks is not None:
         ax.set_xticks(xticks[::xt_step] - 0.25*bar_width)
         ax.set_xticklabels([r'' + " " + str(i) for i in xticks[::xt_step]], fontsize=font_sz - 2)
+
     if not args.show:
         if title == "" and y_label == "": oname = "pplot.pdf"
         else: oname = title + "_" + y_label + ".pdf"
@@ -119,14 +116,13 @@ def confPlot(p, xticks=None, title="", y_label="", x_label="\#iter",
         p.savefig(base_path + "pplots/" + oname, format='pdf')
 
 ############################## Update Time profiles
-if len(update_time) != 0:
-    plt.figure()
-    for i in range(num_confs):
-        # [1:] to remove the first update (initialization update)
-        cfg_val = [np.mean(update_time[i][1:iter_num]), np.std(update_time[i][1:iter_num])]
-        barchart(i, cfg_val, blabel=conf_names[i], bcolor=col_dict[colors[i]])
-    confPlot(plt, title="Update time",
-             y_label="[sec]", x_label="", leg_loc='upper right')
+# if len(update_time) != 0:
+#     plt.figure()
+#     for i in range(num_confs):
+#         # [1:] to remove the first update (initialization update)
+#         cfg_val = [np.mean(update_time[i][1:iter_num]), np.std(update_time[i][1:iter_num])]
+#         barchart(i, cfg_val, blabel=conf_names[i], bcolor=col_dict[colors[i]])
+#     confPlot(plt, title="Update time", y_label="[sec]", x_label="", leg_loc='upper right')
 
 ############################## AutoEncoder
 if len(ae_metrics) != 0:
@@ -148,10 +144,10 @@ if len(gan_metrics) != 0:
         pplot(gan_metrics[i][:iter_num, 0], blabel=conf_names[i], bcolor=col_dict[colors[i]])
     confPlot(plt, title="Transform", y_label="loss", leg_loc='upper left')
 
-    plt.figure()
-    for i in range(num_confs):
-        pplot(gan_metrics[i][:iter_num, 1], blabel=conf_names[i], bcolor=col_dict[colors[i]])
-    confPlot(plt, title="Transform", y_label="accuracy", leg_loc='upper left')
+    # plt.figure()
+    # for i in range(num_confs):
+    #     pplot(gan_metrics[i][:iter_num, 1], blabel=conf_names[i], bcolor=col_dict[colors[i]])
+    # confPlot(plt, title="Transform", y_label="accuracy", leg_loc='upper left')
 
 ############################## GAN
 if len(gan_metrics) != 0:
@@ -170,4 +166,5 @@ if len(gan_metrics) != 0:
               blabel=conf_names[i] + " Adv", bcolor=col_dict['orange'], bmarker=markers[3])
         confPlot(plt, title="GAN " + conf_names[i], y_label="accuracy", leg_loc='upper left')
 
-if args.show: plt.show()
+if args.show:
+    plt.show()

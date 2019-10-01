@@ -1,27 +1,31 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-import time
 import argparse
+import os
+import time
+
 import numpy as np
 import matplotlib.pyplot as plt
 
+from keras import backend as K
 from keras.layers import Dense, Embedding, Activation, Flatten, Reshape
 from keras.layers import Conv1D, Conv2D, Conv2DTranspose, UpSampling2D, LSTM, TimeDistributed
 from keras.layers import LeakyReLU, Dropout
 from keras.layers import BatchNormalization
 from keras.layers import Lambda, Input, Dense
-from keras.models import Model, Sequential, clone_model
 from keras.losses import mse, binary_crossentropy
+from keras.models import Model, Sequential, clone_model
 from keras.optimizers import Adam, RMSprop, SGD
 from keras.utils import plot_model
-from keras import backend as K
+
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
 
 class MetricsSaver:
-    def __init__(self, store_path):
-        self.store_path = store_path
+    def __init__(self, save_path):
+        self.save_path = save_path
         self.met_dict = {}
 
     def add(self, mid, mrow):
@@ -34,7 +38,8 @@ class MetricsSaver:
 
     def save(self):
         for mid, met in self.met_dict.items():
-            np.save(self.store_path + mid + ".npy", met)
+            np.save(os.path.join(self.save_path, mid + ".npy"), met)
+
 
 class ElapsedTimer:
     def __init__(self):
@@ -43,6 +48,7 @@ class ElapsedTimer:
         return round(sec, 2)
     def secs(self):
         return self.__elapsed(time.time() - self.start_time)
+
 
 class LaserScans:
     def __init__(self, verbose=False):
@@ -235,7 +241,7 @@ class LaserScans:
         plt.figure(figsize=(10, 5))
         plt.subplot(121)
         y_axis = scan
-        if not y is None:
+        if y is not None:
             y_axis = y
             plt.plot(x_axis, y_axis, color='lightgray')
 
@@ -260,7 +266,8 @@ class LaserScans:
             else:
                 col = '#1f77b4'
                 plt.plot(theta[s[0]:s[1]], scan[s[0]:s[1]], 'o', markersize=0.5, color=col)
-        if fig_path != "": plt.savefig(fig_path, format='pdf')
+        if fig_path != "":
+            plt.savefig(fig_path, format='pdf')
 
     def plotProjection(self, scan, params0=None, params1=None, fig_path=""):
         assert scan.shape[0] == self.scan_beam_num, "Wrong scan size"
@@ -273,21 +280,24 @@ class LaserScans:
         plt.axis('equal')
         plt.plot(pts[1], pts[0], label='ref')
 
-        if not params0 is None:
+        if params0 is not None:
             x, y, th = params0[0], params0[1], params0[2]
             cth, sth = np.cos(th), np.sin(th)
             hm = np.array(((cth, -sth, x), (sth, cth, y), (0, 0, 1)))
             pts0 = np.matmul(hm, pts)
             plt.plot(pts0[1], pts0[0], label='proj')
 
-        if not params1 is None:
+        if params1 is not None:
             x, y, th = params1[0], params1[1], params1[2]
             cth, sth = np.cos(th), np.sin(th)
             hm = np.array(((cth, -sth, x), (sth, cth, y), (0, 0, 1)))
             pts1 = np.matmul(hm, pts)
             plt.plot(pts1[1], pts1[0], label='pred')
         plt.legend()
-        if fig_path != "": plt.savefig(fig_path, format='pdf')
+
+        if fig_path != "":
+            plt.savefig(fig_path, format='pdf')
+
 
 class TfPredictor:
     def __init__(self, batch_seq_num, input_dim, output_dim,
@@ -378,6 +388,7 @@ class TfPredictor:
         tf[:, 1] = tf[:, 1]*0.18
         tf[:, 2] = tf[:, 2]*np.pi*0.01
         return tf
+
 
 if __name__ == "__main__":
     batch_sz = 8
