@@ -58,13 +58,15 @@ class AutoEncoder:
             self.enc_shape = K.int_shape(enc)
             # Out: 1-dim probability
             enc = Flatten()(enc)
-        else: enc = e_in
+        else:
+            enc = e_in
         enc = Dense(self.intermediate_dim, activation='relu', trainable=tr)(enc)
 
         if self.variational:
             self.z_mean = Dense(self.latent_dim, trainable=tr, name='z_mean')(enc)
             self.z_log_var = Dense(self.latent_dim, trainable=tr, name='z_log_var')(enc)
-            z = Lambda(self.sampling, output_shape=(self.latent_dim,), name='z')([self.z_mean, self.z_log_var])
+            z = Lambda(self.sampling, output_shape=(self.latent_dim,),
+                       name='z')([self.z_mean, self.z_log_var])
             encoder = Model(e_in, [self.z_mean, self.z_log_var, z], name='encoder')
         else:
             e_out = Dense(self.latent_dim, activation='sigmoid', trainable=tr)(enc)
@@ -73,7 +75,8 @@ class AutoEncoder:
 
     def __createDecoder(self, d_in, depth=32, dropout=0.4, tr=True):
         if self.convolutional:
-            dec = Dense(self.enc_shape[1]*self.enc_shape[2]*self.enc_shape[3], activation='relu', trainable=tr)(d_in)
+            dec = Dense(self.enc_shape[1]*self.enc_shape[2]*self.enc_shape[3],
+                        activation='relu', trainable=tr)(d_in)
             dec = Reshape((self.enc_shape[1], self.enc_shape[2], self.enc_shape[3]))(dec)
 
             dec = Conv2DTranspose(filters=int(depth/2), kernel_size=5,
@@ -85,15 +88,17 @@ class AutoEncoder:
             dec = Flatten()(dec)
         else:
             dec = Dense(self.intermediate_dim, activation='relu', trainable=tr)(d_in)
+
         d_out = Dense(self.original_dim, activation='sigmoid', trainable=tr)(dec)
         decoder = Model(d_in, d_out, name='decoder')
         return decoder
 
     def buildModel(self):
-        if not self.ae is None: return self.ae
+        if not self.ae is None:
+            return self.ae
         input_shape = (self.original_dim,)
         depth = 32
-        dropout = 0.4
+        dropout = 0.2
 
         ## ENCODER
         e_in = Input(shape=input_shape, name='encoder_input')
@@ -112,25 +117,25 @@ class AutoEncoder:
             vae_out = self.decoder(self.encoder(e_in)[2])
             self.ae = Model(e_in, vae_out, name='vae_mlp')
             reconstruction_loss = mse(e_in, vae_out) # binary_crossentropy
-            # reconstruction_loss *= self.original_dim
 
             kl_loss = 1 + self.z_log_var - K.square(self.z_mean) - K.square(K.exp(self.z_log_var))
             kl_loss = -0.5*K.sum(kl_loss, axis=-1)
             vae_loss = K.mean(reconstruction_loss + kl_loss)
 
             self.ae.add_loss(vae_loss)
-            self.ae.compile(optimizer=Adam(lr=0.00002), metrics=['accuracy'])
+            self.ae.compile(optimizer=Adam(lr=0.01), metrics=['accuracy'])
         else:
             vae_out = self.decoder(self.encoder(e_in))
             self.ae = Model(e_in, vae_out, name='autoencoder')
-            self.ae.compile(optimizer='adadelta',
-                            loss='binary_crossentropy', metrics=['accuracy'])
+            self.ae.compile(optimizer='adadelta', loss='binary_crossentropy', metrics=['accuracy'])
         if self.verbose: self.ae.summary()
         return self.ae
 
     def fitModel(self, x, x_test=None, epochs=10, verbose=None):
-        if not x_test is None: x_test = (x_test, None)
+        if not x_test is None:
+            x_test = (x_test, None)
         ret = []
+
         if self.variational:
             met = self.ae.fit(x, epochs=epochs, batch_size=self.batch_size,
                               shuffle=True, validation_data=x_test, verbose=verbose)
@@ -140,8 +145,9 @@ class AutoEncoder:
                 for i in range(0, x.shape[0] - self.batch_size, self.batch_size):
                     met = self.ae.train_on_batch(x[i:i + self.batch_size], x[i:i + self.batch_size])
                     ret.append(met)
-        #self.pencoder.set_weights(self.encoder.get_weights())
-        #self.pdecoder.set_weights(self.decoder.get_weights())
+
+        self.pencoder.set_weights(self.encoder.get_weights())
+        self.pdecoder.set_weights(self.decoder.get_weights())
         ret_avgs = np.mean(ret, axis=0)
         return np.array(ret_avgs)
 
@@ -158,7 +164,7 @@ class AutoEncoder:
 
 if __name__ == "__main__":
     batch_sz = 8
-    scan_idx = 1000
+    scan_idx = 8000
     to_show_idx = 10
     gan_batch_sz = 32
 
@@ -166,28 +172,25 @@ if __name__ == "__main__":
     # diag_labrococo.txt
     # diag_underground.txt
     ls = LaserScans(verbose=True)
-    ls.load("../../dataset/diag_underground.txt",
+    ls.load("../../dataset/diag_first_floor.txt",
             scan_res=0.00653590704, scan_fov=(3/2)*np.pi,
             scan_beam_num=512, clip_scans_at=8, scan_offset=8)
     x, x_test = ls.getScans(0.9)
 
-    ae = AutoEncoder(ls.originalScansDim(),
-                     variational=True, convolutional=False,
+    ae = AutoEncoder(ls.originalScansDim(), variational=True, convolutional=False,
                      batch_size=128, latent_dim=20, verbose=True)
     ae.buildModel()
 
-    ae.fitModel(x[:scan_idx], x_test=None, epochs=30, verbose=0)
+    ae.fitModel(x[:scan_idx], x_test=None, epochs=3, verbose=0)
     print('-- step 0: Fitting VAE model done.')
 
     scan = x[scan_idx:(scan_idx + batch_sz*gan_batch_sz)]
-    latent = ae.encode(scan)
-    dscan = ae.decode(latent)
-    ls.plotScan(scan[to_show_idx], dscan[to_show_idx])
+    dscan = ae.decode(ae.encode(scan))
+    # ls.plotScan(scan[to_show_idx], dscan[to_show_idx])
 
-    ae.fitModel(x[scan_idx:scan_idx + 1000], x_test=None, epochs=30, verbose=0)
+    ae.fitModel(x[scan_idx:scan_idx + 6000], x_test=None, epochs=30, verbose=0)
     print('-- step 1: Fitting VAE model done.')
 
-    latent = ae.encode(scan)
-    dscan = ae.decode(latent)
+    dscan = ae.decode(ae.encode(scan))
     ls.plotScan(scan[to_show_idx], dscan[to_show_idx])
     plt.show()

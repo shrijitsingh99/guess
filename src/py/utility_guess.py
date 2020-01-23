@@ -175,7 +175,7 @@ class LaserScans:
             if d == scan.shape[0] - 1: segments.append([iseg, d, useg])
         return segments
 
-    def plotScan(self, scan, y=None):
+    def plotScan(self, scan, y=None, only_polar=True):
         assert scan.shape[0] == self.scan_beam_num, "Wrong scan size"
         theta = self.scan_res*np.arange(-0.5*self.scan_beam_num, 0.5*self.scan_beam_num)
         theta = theta[::-1]
@@ -183,24 +183,24 @@ class LaserScans:
         x_axis = np.arange(self.scan_beam_num)
         segments = self.getScanSegments(scan, 0.99)
         if self.verbose: print("Segments -- ", np.array(segments).shape, "--", segments)
+        y_axis = scan
 
         plt.figure(figsize=(15, 5))
-        plt.subplot(121)
-        y_axis = scan
-        if not y is None:
-            y_axis = y
-            plt.plot(x_axis, y_axis, color='lightgray')
+        # plt.subplot(121)
+        # if not y is None:
+        #     y_axis = y
+        #     plt.plot(x_axis, y_axis, color='lightgray')
 
-        plt.plot(x_axis, scan, color='lightgray')
-        for s in segments:
-            if s[2]:
-                col = '#ff7f0e'
-                plt.plot(x_axis[s[0]:s[1]], y_axis[s[0]:s[1]], 'o', markersize=0.5, color=col)
-            else:
-                col = '#1f77b4'
-                plt.plot(x_axis[s[0]:s[1]], scan[s[0]:s[1]], 'o', markersize=0.5, color=col)
+        # plt.plot(x_axis, scan, color='lightgray')
+        # for s in segments:
+        #     if s[2]:
+        #         col = '#ff7f0e'
+        #         plt.plot(x_axis[s[0]:s[1]], y_axis[s[0]:s[1]], 'o', markersize=0.5, color=col)
+        #     else:
+        #         col = '#1f77b4'
+        #         plt.plot(x_axis[s[0]:s[1]], scan[s[0]:s[1]], 'o', markersize=0.5, color=col)
 
-        ax = plt.subplot(122, projection='polar')
+        ax = plt.subplot(111, projection='polar')
         ax.set_theta_offset(0.5*np.pi)
         plt.plot(theta, scan, color='lightgray')
         for s in segments:

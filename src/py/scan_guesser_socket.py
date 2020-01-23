@@ -62,7 +62,7 @@ if __name__ == "__main__":
     print("| ----------------------------- |\n")
     skt_pkg_scaling = 1000
     scan_seq_size = 8
-    scan_generation_step = 60
+    scan_generation_step = 10
     scan_length = 512
     clip_scans_at = 5.0
     module_rate = 1.0/30 # [1/freq]
@@ -73,7 +73,7 @@ if __name__ == "__main__":
     # print("-- max distance projector:", max_dist_proj)
 
     guesser = ScanGuesser(scan_length, # number of scan beams considered
-                          net_model="afmk",  # conv; lstm
+                          net_model="ff",  # conv; lstm
                           max_dist_projector=max_dist_proj,
                           scan_res=0.00653590704, scan_fov=(3/2)*np.pi,
                           scan_seq_sz=scan_seq_size,  # sequence of scans as input
@@ -81,10 +81,10 @@ if __name__ == "__main__":
                           clip_scans_at=clip_scans_at,  # max beam length [m]
                           ae_fit=True, proj_fit=True, gan_fit=True,
                           # autoencoder
-                          ae_epochs=10, ae_variational=True, ae_convolutional=False,
-                          ae_latent_dim=10,
+                          ae_epochs=10, ae_variational=True, ae_convolutional=True,
+                          ae_latent_dim=15,
                           # gan
-                          gan_batch_sz=32, gan_train_steps=15, gan_noise_dim=1,
+                          gan_batch_sz=32, gan_train_steps=15, gan_noise_dim=2,
                           start_update_thr=True, run_id=rid,
                           metrics_save_rate=50)
     guesser.init(None, init_models=True)
@@ -99,7 +99,7 @@ if __name__ == "__main__":
     sp = Provider(1, dport=handshake_port)
     sp.send(np.array([1]))
 
-    print("\n-- Staring main loop...\n")
+    print("\n-- Starting main loop...\n")
     i = 0
     while i < 10:
         i = i + 0

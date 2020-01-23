@@ -58,8 +58,7 @@ if args.ls:
 
 num_confs = len(args.rid)
 bar_width = 1.0/num_confs
-conf_names = [r'' + "Cfg." + str(i) for i in range(num_confs)] \
-             if len(args.name) == 0 else args.name
+conf_names = [r'' for i in range(num_confs)] if len(args.name) == 0 else args.name  #  + "Cfg." + str(i)
 assert len(conf_names) == num_confs, "input dimensions mismatch"
 
 ae_metrics = [np.load(base_path + m + "/ae_mets.npy") for m in args.rid
@@ -127,8 +126,9 @@ def confPlot(p, xticks=None, title="", y_label="", x_label="\#iter",
 ############################## AutoEncoder
 if len(ae_metrics) != 0:
     plt.figure()
+    orange = 4
     for i in range(num_confs):
-        pplot(ae_metrics[i][:iter_num, 0], blabel=conf_names[i], bcolor=col_dict[colors[i]])
+        pplot(ae_metrics[i][:iter_num, 0], blabel=conf_names[i], bcolor=col_dict[colors[orange]])
     cfg_val = [np.mean(update_time[0][1:iter_num]), np.std(update_time[0][1:iter_num])]
     confPlot(plt, title="AutoEncoder", y_label="loss", leg_loc='upper left')
 
@@ -140,9 +140,10 @@ if len(ae_metrics) != 0:
 ############################## TF projector
 if len(gan_metrics) != 0:
     plt.figure()
+    orange = 4
     for i in range(num_confs):
-        pplot(gan_metrics[i][:iter_num, 0], blabel=conf_names[i], bcolor=col_dict[colors[i]])
-    confPlot(plt, title="Transform", y_label="loss", leg_loc='upper left')
+        pplot(gan_metrics[i][:iter_num, 0], blabel=conf_names[i], bcolor=col_dict[colors[orange]])
+    confPlot(plt, title="AutoEncoder", y_label="loss", leg_loc='upper left')
 
     # plt.figure()
     # for i in range(num_confs):
@@ -156,14 +157,14 @@ if len(gan_metrics) != 0:
         pplot(gan_metrics[i][:iter_num, 2],
               blabel=conf_names[i] + " Dis", bcolor=col_dict['blue'], bmarker=markers[0])
         pplot(gan_metrics[i][:iter_num, 4],
-              blabel=conf_names[i] + " Adv", bcolor=col_dict['red'], bmarker=markers[3])
+              blabel=conf_names[i] + " Gen", bcolor=col_dict['red'], bmarker=markers[3])
         confPlot(plt, title="GAN " + conf_names[i], y_label="loss", leg_loc='upper left')
 
         plt.figure()
         pplot(gan_metrics[i][:iter_num, 3],
               blabel=conf_names[i] + " Dis", bcolor=col_dict['purple'], bmarker=markers[0])
         pplot(gan_metrics[i][:iter_num, 5],
-              blabel=conf_names[i] + " Adv", bcolor=col_dict['orange'], bmarker=markers[3])
+              blabel=conf_names[i] + " Gen", bcolor=col_dict['orange'], bmarker=markers[3])
         confPlot(plt, title="GAN " + conf_names[i], y_label="accuracy", leg_loc='upper left')
 
 if args.show:

@@ -128,7 +128,8 @@ class LaserScans:
             # next_ts[row] = 0.03 # ts[n + seq_length:n + seq_length + seq_step]
             prev_cmdv[row] = cmdv[n:n + seq_length]
             next_cmdv[row] = cmdv[n + seq_length:n + seq_length + seq_step]
-            if not scans is None: next_scan[row] = scans[n + seq_length + seq_step]
+            if not scans is None:
+                next_scan[row] = scans[n + seq_length + seq_step]
 
         pparams = np.concatenate((prev_cmdv, prev_ts), axis=2)
         _, hp = self.computeTransforms(next_cmdv)
@@ -229,43 +230,48 @@ class LaserScans:
             if d == scan.shape[0] - 1: segments.append([iseg, d, useg])
         return segments
 
-    def plotScan(self, scan, y=None, fig_path=""):
+    def plotScan(self, scan, y=None, fig_path="", only_polar=True):
         assert scan.shape[0] == self.scan_beam_num, "Wrong scan size"
         theta = self.scan_res*np.arange(-0.5*self.scan_beam_num, 0.5*self.scan_beam_num)
         theta = theta[::-1]
 
         x_axis = np.arange(self.scan_beam_num)
+        y_axis = scan
         segments = self.getScanSegments(scan, 0.99)
         # if self.verbose: print("Segments -- ", np.array(segments).shape, "--", segments)
 
-        plt.figure(figsize=(10, 5))
-        plt.subplot(121)
-        y_axis = scan
+        plt.figure(figsize=(5, 5) if only_polar else (10, 5))
         if y is not None:
             y_axis = y
-            plt.plot(x_axis, y_axis, color='lightgray')
 
-        plt.plot(x_axis, scan, color='lightgray')
-        for s in segments:
-            if s[2]:
-                col = '#ff7f0e'
-                plt.plot(x_axis[s[0]:s[1]], y_axis[s[0]:s[1]], 'o', markersize=0.5, color=col)
-            else:
-                col = '#1f77b4'
-                plt.plot(x_axis[s[0]:s[1]], scan[s[0]:s[1]], 'o', markersize=0.5, color=col)
+        if not only_polar:
+            plt.subplot(121)
+            # if y is not None:
+            #     plt.plot(x_axis, y_axis, color='lightgray')
+            plt.plot(x_axis, scan, color='lightgray')
 
-        ax = plt.subplot(122, projection='polar')
+            for s in segments:
+                if s[2]:
+                    col = '#ff7f0e'
+                    plt.plot(x_axis[s[0]:s[1]], y_axis[s[0]:s[1]], 'o', markersize=0.5, color=col)
+                else:
+                    col = '#1f77b4'
+                    plt.plot(x_axis[s[0]:s[1]], scan[s[0]:s[1]], 'o', markersize=0.5, color=col)
+
+        ax = plt.subplot(111, projection='polar') if only_polar else plt.subplot(122, projection='polar')
         ax.set_theta_offset(0.5*np.pi)
         ax.set_rlabel_position(-180)  # get radial labels away from plotted line
 
-        plt.plot(theta, scan, color='lightgray')
         for s in segments:
             if s[2]:
+                pass
+            else:
                 col = '#ff7f0e'
                 plt.plot(theta[s[0]:s[1]], y_axis[s[0]:s[1]], 'o', markersize=0.5, color=col)
-            else:
                 col = '#1f77b4'
                 plt.plot(theta[s[0]:s[1]], scan[s[0]:s[1]], 'o', markersize=0.5, color=col)
+        # plt.plot(theta, y_axis, color='#ff7f0e')
+
         if fig_path != "":
             plt.savefig(fig_path, format='pdf')
 

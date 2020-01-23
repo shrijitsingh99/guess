@@ -74,8 +74,8 @@ class ScanGuesser:
         # building models
         self.projector.buildModel()
         self.ae.buildModel()
-        self.gan.buildModel((self.scan_dim,), self.gan_input_shape,
-                            smoothing_factor=0.0, noise_dim=gan_noise_dim, model_id=self.net_model)
+        self.gan.buildModel((ae_latent_dim,), self.gan_input_shape,
+                            smoothing_factor=0.0, noise_dim=0, model_id=self.net_model)
 
         self.update_mtx = Lock()
         self.updating_model = False
@@ -103,12 +103,11 @@ class ScanGuesser:
                 self.update_mtx.acquire()
                 self.updating_model = True
                 self.update_mtx.release()
-
                 self._fitModel(scans, cmd_vel, ts, verbose=False)
-
                 self.update_mtx.acquire()
                 self.updating_model = False
                 self.update_mtx.release()
+
         print("-- Terminating update thread.")
 
     def computeTransform(self, cmdv):
@@ -118,27 +117,25 @@ class ScanGuesser:
         x_latent = np.concatenate((ae_encoded, cmd_vel), axis=1)
         n_rows = int((ae_encoded.shape[0] - self.scan_seq_sz - self.gen_step)/self.scan_seq_sz) + 1
         x_latent = x_latent[:n_rows*self.scan_seq_sz].reshape((n_rows, self.scan_seq_sz, self.gan_input_shape[1]))
-        next_scan, pparams, hp = self.ls.reshapeInSequences(scans, cmd_vel, ts,
-                                                            self.scan_seq_sz, self.gen_step,
+        next_scan_latent, pparams, hp = self.ls.reshapeInSequences(ae_encoded, cmd_vel, ts, self.scan_seq_sz, self.gen_step,
                                                             normalize=self.max_dist_projector)
-        return x_latent, next_scan, pparams, hp
+        return x_latent, next_scan_latent, pparams, hp
 
     def _updateAE(self, scans, verbose=None):
-        if verbose is None:
-            verbose = self.verbose
+        verbose = self.verbose if verbose is None else verboser
         return self.ae.fitModel(scans, epochs=self.ae_epochs, verbose=int(verbose)) if self.ae_fit else np.zeros((2,))
 
     def _updateGan(self, scans, cmd_vel, ts, verbose=False):
         latent = self.encodeScan(scans)
-        x_latent, next_scan, pp, hp = self._reshapeGanInput(scans, cmd_vel, ts, latent)
+        x_latent, next_scan_latent, pp, hp = self._reshapeGanInput(scans, cmd_vel, ts, latent)
         p_metrics, g_metrics = np.zeros((2,)), np.zeros((4,))
 
         if self.proj_fit:
             p_metrics = self.projector.fitModel(pp, hp, epochs=40)
+
         if self.gan_fit:
-            next_scan = 2.0*next_scan - 1.0  # tanh normalize
-            g_metrics = self.gan.fitModel(x_latent, next_scan,
-                                          train_steps=self.gan_train_steps,
+            # next_scan = 2.0*next_scan - 1.0  # tanh normalize
+            g_metrics = self.gan.fitModel(x_latent, next_scan_latent, train_steps=self.gan_train_steps,
                                           batch_sz=self.gan_batch_sz, verbose=verbose)[-1]
 
         return np.concatenate((p_metrics, g_metrics))
@@ -221,7 +218,7 @@ class ScanGuesser:
             self.b_cmdv = np.vstack((self.b_cmdv, cmd_vel))
             self.b_ts = np.vstack((self.b_ts, ts))
 
-        nb = 3
+        nb = 16
         min_scan_num = self.gan_batch_sz*self.scan_seq_sz
         if self.b_scans.shape[0] < nb*min_scan_num + self.gen_step:
             return False
@@ -283,7 +280,9 @@ class ScanGuesser:
         latent = np.concatenate((ae_encoded, cmd_vel), axis=1)
         n_rows = int(ae_encoded.shape[0]/self.scan_seq_sz)
         x_latent = latent[:ae_encoded.shape[0]].reshape((n_rows, self.scan_seq_sz, self.gan_input_shape[1]))
-        gen = self.gan.generate(x_latent)
+        import pdb; pdb.set_trace()
+
+        gen = self.decodeScan(self.gan.generate(x_latent), clip_max=False, interpolate=False)
         gen = 0.5*(gen + 1.0)  # tanh denormalize
 
         if self.interpolate_scans_pts:
