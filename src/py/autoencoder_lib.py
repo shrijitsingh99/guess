@@ -22,8 +22,7 @@ from keras import backend as K
 from utils import LaserScans
 
 class AutoEncoder:
-    def __init__(self, original_dim,
-                 variational=True, convolutional=True,
+    def __init__(self, original_dim, variational=True, convolutional=True,
                  batch_size=128, latent_dim=10, intermediate_dim=128, verbose=False):
         self.original_dim = original_dim
         self.variational = variational
@@ -47,7 +46,7 @@ class AutoEncoder:
         epsilon = K.random_normal(shape=(batch, dim))
         return z_mean + K.exp(0.5 * z_log_var) * epsilon
 
-    def __createEncoder(self, e_in, depth=32, dropout=0.4, tr=True):
+    def __create_encoder(self, e_in, depth=32, dropout=0.4, tr=True):
         if self.convolutional:
             enc = Reshape((self.reshape_rows, int(self.original_dim/self.reshape_rows), 1,))(e_in)
             enc = Conv2D(depth, 5, activation='relu', strides=2, padding='same', trainable=tr)(enc)
@@ -65,15 +64,14 @@ class AutoEncoder:
         if self.variational:
             self.z_mean = Dense(self.latent_dim, trainable=tr, name='z_mean')(enc)
             self.z_log_var = Dense(self.latent_dim, trainable=tr, name='z_log_var')(enc)
-            z = Lambda(self.sampling, output_shape=(self.latent_dim,),
-                       name='z')([self.z_mean, self.z_log_var])
+            z = Lambda(self.sampling, output_shape=(self.latent_dim,), name='z')([self.z_mean, self.z_log_var])
             encoder = Model(e_in, [self.z_mean, self.z_log_var, z], name='encoder')
         else:
-            e_out = Dense(self.latent_dim, activation='sigmoid', trainable=tr)(enc)
+            e_out = Dense(self.latent_dim, activation='tanh', trainable=tr)(enc)
             encoder = Model(e_in, e_out, name='encoder')
         return encoder
 
-    def __createDecoder(self, d_in, depth=32, dropout=0.4, tr=True):
+    def __create_decoder(self, d_in, depth=32, dropout=0.4, tr=True):
         if self.convolutional:
             dec = Dense(self.enc_shape[1]*self.enc_shape[2]*self.enc_shape[3],
                         activation='relu', trainable=tr)(d_in)
@@ -89,11 +87,11 @@ class AutoEncoder:
         else:
             dec = Dense(self.intermediate_dim, activation='relu', trainable=tr)(d_in)
 
-        d_out = Dense(self.original_dim, activation='sigmoid', trainable=tr)(dec)
+        d_out = Dense(self.original_dim, activation='tanh', trainable=tr)(dec)
         decoder = Model(d_in, d_out, name='decoder')
         return decoder
 
-    def buildModel(self):
+    def build_model(self):
         if not self.ae is None:
             return self.ae
         input_shape = (self.original_dim,)
@@ -102,14 +100,14 @@ class AutoEncoder:
 
         ## ENCODER
         e_in = Input(shape=input_shape, name='encoder_input')
-        self.encoder = self.__createEncoder(e_in, depth=depth, dropout=dropout, tr=True)
-        self.pencoder = self.__createEncoder(e_in, depth=depth, dropout=dropout, tr=False)
+        self.encoder = self.__create_encoder(e_in, depth=depth, dropout=dropout, tr=True)
+        self.pencoder = self.__create_encoder(e_in, depth=depth, dropout=dropout, tr=False)
         if self.verbose: self.encoder.summary()
 
         ## DECODER
         d_in = Input(shape=(self.latent_dim,), name='decoder_input')
-        self.decoder = self.__createDecoder(d_in, depth=depth, dropout=dropout, tr=True)
-        self.pdecoder = self.__createDecoder(d_in, depth=depth, dropout=dropout, tr=False)
+        self.decoder = self.__create_decoder(d_in, depth=depth, dropout=dropout, tr=True)
+        self.pdecoder = self.__create_decoder(d_in, depth=depth, dropout=dropout, tr=False)
         if self.verbose: self.decoder.summary()
 
         ## AUTOENCODER
@@ -131,7 +129,7 @@ class AutoEncoder:
         if self.verbose: self.ae.summary()
         return self.ae
 
-    def fitModel(self, x, x_test=None, epochs=10, verbose=None):
+    def train(self, x, x_test=None, epochs=10, verbose=None):
         if not x_test is None:
             x_test = (x_test, None)
         ret = []
@@ -152,7 +150,8 @@ class AutoEncoder:
         return np.array(ret_avgs)
 
     def encode(self, x, batch_size=None):
-        if len(x.shape) == 1: x = np.array([x])
+        x = np.array([x]) if len(x.shape) == 1 else x
+
         if self.variational:
             z_mean, _, _ = self.encoder.predict(x, batch_size=batch_size)
             return z_mean
@@ -163,34 +162,36 @@ class AutoEncoder:
         return self.decoder.predict(z_mean)
 
 if __name__ == "__main__":
-    batch_sz = 8
-    scan_idx = 8000
-    to_show_idx = 10
-    gan_batch_sz = 32
+    batch_sz = 128
+    scan_n = 8000
+    plot_idx = 500
 
-    # diag_first_floor.txt
-    # diag_labrococo.txt
-    # diag_underground.txt
+    # diag_first_floor.txt ; diag_underground.txt ; diag_labrococo.txt
+    cwd = os.path.dirname(os.path.abspath(__file__))
+    dataset_file = os.path.join(os.path.join(cwd, "../../dataset/"), "diag_underground.txt")
+
     ls = LaserScans(verbose=True)
-    ls.load("../../dataset/diag_first_floor.txt",
-            scan_res=0.00653590704, scan_fov=(3/2)*np.pi,
+    ls.load(dataset_file, scan_res=0.00653590704, scan_fov=(3/2)*np.pi,
             scan_beam_num=512, clip_scans_at=8, scan_offset=8)
-    x, x_test = ls.getScans(0.9)
+    x = ls.getScans()[:scan_n]
+
+    rnd_indices = np.arange(scan_n)
+    np.random.shuffle(rnd_indices)
 
     ae = AutoEncoder(ls.originalScansDim(), variational=True, convolutional=False,
-                     batch_size=128, latent_dim=20, verbose=True)
-    ae.buildModel()
+                     batch_size=batch_sz, latent_dim=20, verbose=True)
+    ae.build_model()
 
-    ae.fitModel(x[:scan_idx], x_test=None, epochs=3, verbose=0)
+    ae.train(x[rnd_indices], x_test=None, epochs=1, verbose=0)
     print('-- step 0: Fitting VAE model done.')
 
-    scan = x[scan_idx:(scan_idx + batch_sz*gan_batch_sz)]
-    dscan = ae.decode(ae.encode(scan))
-    # ls.plotScan(scan[to_show_idx], dscan[to_show_idx])
+    decoded_x = ae.decode(ae.encode(x))
+    ls.plotScan(x[plot_idx], decoded_x[plot_idx])
 
-    ae.fitModel(x[scan_idx:scan_idx + 6000], x_test=None, epochs=30, verbose=0)
+    np.random.shuffle(rnd_indices)
+    ae.train(x[rnd_indices], x_test=None, epochs=30, verbose=0)
     print('-- step 1: Fitting VAE model done.')
 
-    dscan = ae.decode(ae.encode(scan))
-    ls.plotScan(scan[to_show_idx], dscan[to_show_idx])
+    decoded_x = ae.decode(ae.encode(x))
+    ls.plotScan(x[plot_idx], decoded_x[plot_idx])
     plt.show()
