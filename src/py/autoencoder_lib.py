@@ -34,8 +34,8 @@ class AutoEncoder:
         self.reshape_rows = 32
         self.encoder = None
         self.decoder = None
-        self.pencoder = None
-        self.pdecoder = None
+        # self.pencoder = None
+        # self.pdecoder = None
         self.ae = None
 
     def sampling(self, args):
@@ -59,11 +59,13 @@ class AutoEncoder:
             enc = Flatten()(enc)
         else:
             enc = e_in
+
         enc = Dense(self.intermediate_dim, activation='relu', trainable=tr)(enc)
+        enc = LeakyReLU(alpha=0.2)(enc)
 
         if self.variational:
-            self.z_mean = Dense(self.latent_dim, trainable=tr, name='z_mean')(enc)
-            self.z_log_var = Dense(self.latent_dim, trainable=tr, name='z_log_var')(enc)
+            self.z_mean = Dense(self.latent_dim, activation='tanh', trainable=tr, name='z_mean')(enc)
+            self.z_log_var = Dense(self.latent_dim, activation='tanh', trainable=tr, name='z_log_var')(enc)
             z = Lambda(self.sampling, output_shape=(self.latent_dim,), name='z')([self.z_mean, self.z_log_var])
             encoder = Model(e_in, [self.z_mean, self.z_log_var, z], name='encoder')
         else:
@@ -91,49 +93,51 @@ class AutoEncoder:
         decoder = Model(d_in, d_out, name='decoder')
         return decoder
 
-    def build_model(self):
+    def build_model(self, lr=0.01):
         if not self.ae is None:
             return self.ae
         input_shape = (self.original_dim,)
         depth = 32
-        dropout = 0.2
+        dropout = 0.1
 
         ## ENCODER
         e_in = Input(shape=input_shape, name='encoder_input')
         self.encoder = self.__create_encoder(e_in, depth=depth, dropout=dropout, tr=True)
-        self.pencoder = self.__create_encoder(e_in, depth=depth, dropout=dropout, tr=False)
-        if self.verbose: self.encoder.summary()
 
         ## DECODER
         d_in = Input(shape=(self.latent_dim,), name='decoder_input')
         self.decoder = self.__create_decoder(d_in, depth=depth, dropout=dropout, tr=True)
-        self.pdecoder = self.__create_decoder(d_in, depth=depth, dropout=dropout, tr=False)
-        if self.verbose: self.decoder.summary()
 
         ## AUTOENCODER
         if self.variational:
             vae_out = self.decoder(self.encoder(e_in)[2])
             self.ae = Model(e_in, vae_out, name='vae_mlp')
             reconstruction_loss = mse(e_in, vae_out) # binary_crossentropy
+            reconstruction_loss *= self.original_dim
 
             kl_loss = 1 + self.z_log_var - K.square(self.z_mean) - K.square(K.exp(self.z_log_var))
             kl_loss = -0.5*K.sum(kl_loss, axis=-1)
             vae_loss = K.mean(reconstruction_loss + kl_loss)
 
             self.ae.add_loss(vae_loss)
-            self.ae.compile(optimizer=Adam(lr=0.01), metrics=['accuracy'])
+            self.ae.compile(optimizer=Adam(lr=lr), metrics=['accuracy'])
         else:
             vae_out = self.decoder(self.encoder(e_in))
             self.ae = Model(e_in, vae_out, name='autoencoder')
             self.ae.compile(optimizer='adadelta', loss='binary_crossentropy', metrics=['accuracy'])
-        if self.verbose: self.ae.summary()
+
+        if self.verbose:
+            self.encoder.summary()
+            self.decoder.summary()
+            self.ae.summary()
+
         return self.ae
 
     def train(self, x, x_test=None, epochs=10, verbose=None):
-        if not x_test is None:
-            x_test = (x_test, None)
-        ret = []
+        verbose = 0 if verbose is None else verbose
+        x_test = None if x_test is None else (x_test, None)
 
+        ret = []
         if self.variational:
             met = self.ae.fit(x, epochs=epochs, batch_size=self.batch_size,
                               shuffle=True, validation_data=x_test, verbose=verbose)
@@ -144,13 +148,11 @@ class AutoEncoder:
                     met = self.ae.train_on_batch(x[i:i + self.batch_size], x[i:i + self.batch_size])
                     ret.append(met)
 
-        self.pencoder.set_weights(self.encoder.get_weights())
-        self.pdecoder.set_weights(self.decoder.get_weights())
         ret_avgs = np.mean(ret, axis=0)
         return np.array(ret_avgs)
 
     def encode(self, x, batch_size=None):
-        x = np.array([x]) if len(x.shape) == 1 else x
+        x = np.expand_dims(x, axis=0) if len(x.shape) == 1 else x
 
         if self.variational:
             z_mean, _, _ = self.encoder.predict(x, batch_size=batch_size)
@@ -163,8 +165,11 @@ class AutoEncoder:
 
 if __name__ == "__main__":
     batch_sz = 128
-    scan_n = 8000
-    plot_idx = 500
+    scan_n = 10000
+    plot_idx = 1000
+    learning_rate = 0.01
+    latent_dim = 32
+    epochs = 20
 
     # diag_first_floor.txt ; diag_underground.txt ; diag_labrococo.txt
     cwd = os.path.dirname(os.path.abspath(__file__))
@@ -173,25 +178,29 @@ if __name__ == "__main__":
     ls = LaserScans(verbose=True)
     ls.load(dataset_file, scan_res=0.00653590704, scan_fov=(3/2)*np.pi,
             scan_beam_num=512, clip_scans_at=8, scan_offset=8)
-    x = ls.getScans()[:scan_n]
+    x = ls.get_scans()[:scan_n]
 
     rnd_indices = np.arange(scan_n)
     np.random.shuffle(rnd_indices)
 
-    ae = AutoEncoder(ls.originalScansDim(), variational=True, convolutional=False,
-                     batch_size=batch_sz, latent_dim=20, verbose=True)
-    ae.build_model()
+    ae = AutoEncoder(ls.scans_dim(), variational=True, convolutional=False,
+                     batch_size=batch_sz, latent_dim=latent_dim, verbose=True)
+    ae.build_model(lr=learning_rate)
 
-    ae.train(x[rnd_indices], x_test=None, epochs=1, verbose=0)
+    ae.train(x[rnd_indices], epochs=1)
     print('-- step 0: Fitting VAE model done.')
 
     decoded_x = ae.decode(ae.encode(x))
-    ls.plotScan(x[plot_idx], decoded_x[plot_idx])
+    ls.plot_scans([
+        (x[plot_idx], '#e41a1c', 'scan'),
+        (decoded_x[plot_idx], '#ff7f0e', 'decoded')])
 
     np.random.shuffle(rnd_indices)
-    ae.train(x[rnd_indices], x_test=None, epochs=30, verbose=0)
+    ae.train(x[rnd_indices], epochs=epochs, verbose=0)
     print('-- step 1: Fitting VAE model done.')
 
     decoded_x = ae.decode(ae.encode(x))
-    ls.plotScan(x[plot_idx], decoded_x[plot_idx])
+    ls.plot_scans([
+        (x[plot_idx], '#e41a1c', 'scan'),
+        (decoded_x[plot_idx], '#ff7f0e', 'decoded')])
     plt.show()
