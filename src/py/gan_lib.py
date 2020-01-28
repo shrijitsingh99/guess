@@ -32,7 +32,7 @@ class GAN:
 
     def build_model(self, discriminator_input_shape, generator_input_shape,
                     discriminator_lr=0.0002, generator_lr=0.002, smoothing_factor=0.05,
-                    noise_dim=5, noise_magnitude=2., model_id="afmk"):
+                    noise_dim=5, noise_magnitude=2., multiply_noise=False, model_id="afmk"):
         assert noise_dim > 0, 'Noise dimension must be graeater than 1.'
 
         self.model_id = model_id
@@ -42,17 +42,18 @@ class GAN:
         self.discriminator_input_shape = discriminator_input_shape
         self.generator_input_shape = generator_input_shape
 
-        assert self.noise_dim % self.generator_input_shape[0] == 0, \
-            'Number of noise dimension must be a multiplier of %d' % self.generator_input_shape[0]
+        if not multiply_noise:
+            assert self.noise_dim % self.generator_input_shape[0] == 0, \
+                'Number of noise dimension must be a multiplier of %d' % self.generator_input_shape[0]
 
         # Build and compile the discriminator
         optimizer = Adam(lr=discriminator_lr, beta_1=0.5, decay=3e-8)
-        self.discriminator = self.build_discriminator()
+        self.discriminator = self.build_multiply_noise_discriminator() if multiply_noise else self.build_discriminator()
         self.discriminator.compile(loss=['binary_crossentropy'], optimizer=optimizer,
                                    metrics=['accuracy'])
 
         # Build the generator
-        self.generator = self.build_generator()
+        self.generator = self.build_multiply_noise_generator() if multiply_noise else self.build_generator()
 
         # The generator takes noise and the target label as input
         # and generates the corresponding digit of that label
@@ -86,7 +87,7 @@ class GAN:
 
         x = Input(shape=self.discriminator_input_shape)
         label = Input(shape=self.generator_input_shape, dtype='float32')
-        flat_label = Dense(self.discriminator_input_shape[0])(Flatten()(label))
+        flat_label = Dense(self.discriminator_input_shape[0], trainable=False)(Flatten()(label))
         model_input = multiply([x, flat_label])
         validity = model(model_input)
 
@@ -254,12 +255,12 @@ if __name__ == "__main__":
     scan_to_predict_idx = 1000
     scan_beam_num = 512
 
-    latent_dim = 10
+    latent_dim = 32
     correlated_sequence_step = 8
     prediction_step = 8
 
     ae_batch_sz = 256
-    ae_epochs = 30
+    ae_epochs = 20
 
     gan_noise_dim = 8
     gan_batch_sz = 32
@@ -321,10 +322,10 @@ if __name__ == "__main__":
 
     rnd_indices = np.arange(dataset_dim)
     np.random.shuffle(rnd_indices)
-    metrics = gan.train(gan_x[rnd_indices], gan_y[rnd_indices], train_steps=100, batch_sz=gan_batch_sz, verbose=True)
+    metrics = gan.train(gan_x[rnd_indices], gan_y[rnd_indices], train_steps=10, batch_sz=gan_batch_sz, verbose=True)
 
     gen_latent = gan.generate(correlated_latent)
-    gen_scan = 0.5*(ae.decode(gen_latent.reshape((1, latent_dim)))[0] + 1.0)
+    gen_scan = ae.decode(gen_latent.reshape((1, latent_dim)))[0]
 
     plt.title('Metrics')
     plt.plot(metrics[:, 0], label='D-loss')
