@@ -112,66 +112,55 @@ class LaserScans:
         self.cmd_vel = np.zeros((rand_scans_num, 6))
         self.ts = np.zeros((rand_scans_num, 1))
 
-    def reshape_correlated_scans(self, scans, cmdv, ts, seq_length, seq_step, normalize_factor=None):
-        next_scan, pparams, hp = None, None, None
-        if cmdv.shape[0] < seq_length + seq_step or cmdv.shape[0] != ts.shape[0]:
-            return next_scan, pparams, hp
+    def reshape_correlated_scans(self, cmdv, ts, correlated_steps, integration_steps,
+                                 theta_axis=5, normalize_factor=None):
+        assert cmdv.shape[0] >= correlated_steps + integration_steps \
+            and cmdv.shape[0] == ts.shape[0]
 
-        e_iter = ts.shape[0] - seq_length - seq_step
-        n_rows = int(e_iter/seq_length) + 1
-        prev_ts = 0.33*np.ones((n_rows, seq_length, 1))
-        prev_cmdv = np.zeros((n_rows, seq_length, cmdv.shape[1]))
-        # next_ts = np.empty((n_rows, seq_step, 1))
-        next_cmdv = np.zeros((n_rows, seq_step, cmdv.shape[1]))
-        next_scan = np.zeros((n_rows, scans.shape[1]))
+        max_prev_row = int(cmdv.shape[0]/correlated_steps)*correlated_steps
+        cmdv = cmdv[:max_prev_row]
+        ts = ts[:max_prev_row]
 
-        for n in range(0, e_iter, seq_length):
-            row = int(n/seq_length)
-            # prev_ts[row] = tb[n]
-            # next_ts[row] = 0.03 # ts[n + seq_length:n + seq_length + seq_step]
-            prev_cmdv[row] = cmdv[n:n + seq_length]
-            next_cmdv[row] = cmdv[n + seq_length:n + seq_length + seq_step]
-            if scans is not None:
-                next_scan[row] = scans[n + seq_length + seq_step]
-
-        pparams = np.concatenate((prev_cmdv, prev_ts), axis=2)
-        _, hp = self.compute_transforms(next_cmdv)
+        prev_cmdv = cmdv.reshape((-1, correlated_steps, cmdv.shape[1]))
+        next_cmdv = np.array([cmdv[c:c + integration_step] for c in range(correlated_steps,
+                                                                          cmdv.shape[0] - integration_steps,
+                                                                          correlated_steps)], dtype=np.float32)
+        rows = min(prev_cmdv.shape[0], next_cmdv.shape[0])
+        prev_cmdv = prev_cmdv[:rows]
+        next_cmdv = next_cmdv[:rows]
+        prev_ts = 0.33*np.ones_like(prev_cmdv[..., :1])
+        correlated_cmdv = np.concatenate([prev_cmdv, prev_ts], axis=-1)
+        _, next_transform = self.compute_transforms(next_cmdv, theta_axis=theta_axis)
 
         if normalize_factor is not None:
-            translation = np.clip(hp[:, :2], a_min=-normalize_factor, a_max=normalize_factor)
             # translation normalization -> [-1.0, 1.0]
-            hp[:, :2] = translation/normalize_factor
+            next_transform[:, :2] = np.clip(next_transform[:, :2], a_min=-normalize_factor,
+                                            a_max=normalize_factor)/normalize_factor
             # theta normalization -> [-1.0, 1.0]
-            hp[:, 2] = hp[:, 2]/np.pi
+            next_transform[:, 2] /= np.pi
 
-        return next_scan, pparams, hp
+        return correlated_cmdv, next_transform
 
-    def compute_transform(self, cmdv, ts=None):
-        cb, tb = cmdv, np.zeros((cmdv.shape[0],))
-        if ts is None:
-            tstep = 0.033
-        else:
-            for t in range(1, ts.shape[0]):
-                tb[t] = ts[t] - ts[t - 1]
-            tstep = max(0.033, min(0.0, np.mean(tb)))
+    def compute_transform(self, cmdv, ts=None, theta_axis=5):
+        tstep = 0.033 if ts is None else max(0.033, min(0.0, np.mean(ts[:1] - ts[:-1])))
 
-        x, tfp_transform, th = 0.0, 0.0, 0.0
+        x, y, th = 0.0, 0.0, 0.0
         for n in range(cmdv.shape[0]):
-            rk_th = th + 0.5*cb[n, 5]*tstep  # runge-kutta integration
-            x = x + cb[n, 0]*np.cos(rk_th)*tstep
-            tfp_transform = tfp_transform + cb[n, 0]*np.sin(rk_th)*tstep
-            th = th + cb[n, 5]*tstep
-        cth, sth = np.cos(th), np.sin(th)
-        return np.array(((cth, -sth, x), (sth, cth, tfp_transform), (0, 0, 1))), x, tfp_transform, th
+            rk_th = th + 0.5*cmdv[n, theta_axis]*tstep  # runge-kutta integration
+            x = x + cmdv[n, 0]*np.cos(rk_th)*tstep
+            y = y + cmdv[n, 0]*np.sin(rk_th)*tstep
+            th = th + cmdv[n, theta_axis]*tstep
 
-    def compute_transforms(self, cmdv, ts=None):
-        hm = np.zeros((cmdv.shape[0], 9))
-        hp = np.zeros((cmdv.shape[0], 3))
-        for i in range(cmdv.shape[0]):
-            h, x, tfp_transform, t = self.compute_transform(cmdv[i])
-            hm[i, :] = h.reshape((9,))
-            hp[i, :] = np.array([x, tfp_transform, t])
-        return hm, hp
+        cth, sth = np.cos(th), np.sin(th)
+        homogenous_matrix = np.array(((cth, -sth, x), (sth, cth, y), (0, 0, 1)), dtype=np.float32)
+        transform_params = np.array([x, y, th], dtype=np.float32)
+        return homogenous_matrix, transform_params
+
+    def compute_transforms(self, cmdv, ts=None, theta_axis=5):
+        transforms = [list(self.compute_transform(c, theta_axis=theta_axis)) for c in cmdv]
+        homogenous_matrix = np.array([t[0] for t in transforms], dtype=np.float32)
+        transform_params = np.array([t[1] for t in transforms], dtype=np.float32)
+        return homogenous_matrix, transform_params
 
     def project_scan(self, scan, cmdv, ts):
         assert scan.shape[0] == self.scan_beam_num, "Wrong scan size."
@@ -371,11 +360,11 @@ class TfPredictor:
 if __name__ == "__main__":
     scan_n = 8000
     correlated_steps = 8
-    batch_sz = 32
-    scan_ahead_step = 10
+    batch_sz = 64
+    integration_step = 10
 
     max_vel = 0.45
-    max_dist = 0.33*scan_ahead_step*max_vel
+    max_dist = 0.33*integration_step*max_vel
     learning_rate = 0.002
 
     # diag_first_floor.txt ; diag_underground.txt ; diag_labrococo.txt
@@ -386,13 +375,12 @@ if __name__ == "__main__":
     ls.load(dataset_file, scan_res=0.00653590704, scan_fov=(3/2)*np.pi, scan_beam_num=512,
             clip_scans_at=8, scan_offset=8)
     scans = ls.get_scans()[:scan_n]
-    cmdvs = ls.get_cmd_vel()[:scan_n]
+    cmdvs = ls.get_cmd_vel()[:scan_n, ::5]
     timesteps = ls.timesteps()[:scan_n]
 
-    next_scans, correlated_cmdv, target_transform = ls.reshape_correlated_scans(scans, cmdvs, timesteps,
-                                                                                correlated_steps, scan_ahead_step,
-                                                                                normalize_factor=max_dist)
-    correlated_cmdv = np.concatenate([correlated_cmdv[..., ::5], correlated_cmdv[..., -1:]], axis=-1)
+    correlated_cmdv, target_transform = ls.reshape_correlated_scans(cmdvs, timesteps,
+                                                                    correlated_steps, integration_step,
+                                                                    normalize_factor=max_dist, theta_axis=1)
 
     tfp = TfPredictor(correlated_steps=correlated_steps, input_dim=correlated_cmdv.shape[-1],
                       output_dim=3, batch_size=batch_sz, verbose=True)
@@ -403,12 +391,12 @@ if __name__ == "__main__":
     tfp_transform[:, 2] = tfp_transform[:, 2]*np.pi
 
     rnd_idx = int(np.random.rand() * tfp_transform.shape[0])
-    ls.plot_projections(next_scans[rnd_idx], params=[target_transform[rnd_idx], tfp_transform[rnd_idx]],
+    ls.plot_projections(scans[rnd_idx], params=[target_transform[rnd_idx], tfp_transform[rnd_idx]],
                         param_names=['projected', 'predicted'])
 
     ms = MetricsSaver(save_path="/tmp/")
 
-    nsteps = 30
+    nsteps = 40
     for i in range(nsteps):
         metrics = tfp.train(correlated_cmdv, target_transform, epochs=10)
         print("-- step %d: simple tfp: [loss acc]" % i, metrics)
@@ -418,7 +406,7 @@ if __name__ == "__main__":
     tfp_transform[:, :2] = tfp_transform[:, :2]*max_dist
     tfp_transform[:, 2] = tfp_transform[:, 2]*np.pi
 
-    ls.plot_projections(next_scans[rnd_idx], params=[target_transform[rnd_idx], tfp_transform[rnd_idx]],
+    ls.plot_projections(scans[rnd_idx], params=[target_transform[rnd_idx], tfp_transform[rnd_idx]],
                         param_names=['projected', 'predicted'])
     ms.save()
     plt.show()
