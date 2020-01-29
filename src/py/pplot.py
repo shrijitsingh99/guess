@@ -53,14 +53,15 @@ if args.ls:
     print("\n-- listing:")
     for i, m in enumerate(mets_list):
         if os.path.isdir(os.path.join(base_path, m)):
-            print ' -', m
+            print(' -', m)
     exit()
 
 num_confs = len(args.rid)
 bar_width = 1.0/num_confs
-conf_names = [r'' for i in range(num_confs)] if len(args.name) == 0 else args.name  #  + "Cfg." + str(i)
+conf_names = [r'Cfg. ' + str(i) for i in range(num_confs)] if len(args.name) == 0 else args.name
 assert len(conf_names) == num_confs, "input dimensions mismatch"
 
+save_paths = [os.path.join(base_path, m + '/metrics/') for m in args.rid]
 ae_metrics = [np.load(base_path + m + "/ae_mets.npy") for m in args.rid
               if os.path.isfile(base_path + m + "/ae_mets.npy")]
 gan_metrics = [np.load(base_path + m + "/gan-tf_mets.npy") for m in args.rid
@@ -86,9 +87,9 @@ def pplot(value, blabel="", bcolor=col_dict["blue"], col_shade=0.9, line_width=1
              marker=bmarker, markersize=marker_sz, markevery=mark_at, label=blabel)
 
 
-def confPlot(p, xticks=None, title="", y_label="", x_label="\#iter",
-             font_sz=18, xt_step=1, leg_loc='lower right'):
-    font_sz = max(12, font_sz)
+def configure_plot(p, xticks=None, title="title", y_label="label", x_label="\#iter",
+                   font_sz=18, xt_step=1, leg_loc='lower right', save_dir=''):
+    # font_sz = max(12, font_sz)
     p.legend(loc=leg_loc, fontsize=font_sz - 4, ncol=3)
     p.xlabel(x_label, fontsize=font_sz - 2)
     p.ylabel(r'' + y_label, fontsize=font_sz - 4)
@@ -108,11 +109,13 @@ def confPlot(p, xticks=None, title="", y_label="", x_label="\#iter",
         ax.set_xticks(xticks[::xt_step] - 0.25*bar_width)
         ax.set_xticklabels([r'' + " " + str(i) for i in xticks[::xt_step]], fontsize=font_sz - 2)
 
-    if not args.show:
-        if title == "" and y_label == "": oname = "pplot.pdf"
-        else: oname = title + "_" + y_label + ".pdf"
-        oname = oname.lower().replace("]", "").replace("[", "").replace(" ", "_")
-        p.savefig(base_path + "pplots/" + oname, format='pdf')
+    if len(save_dir) != 0:
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+
+        out_name = title + "_" + y_label + ".pdf"
+        out_name = out_name.lower().replace("]", "").replace("[", "").replace(" ", "_")
+        p.savefig(os.path.join(save_dir, out_name), format='pdf')
 
 ############################## Update Time profiles
 # if len(update_time) != 0:
@@ -121,7 +124,7 @@ def confPlot(p, xticks=None, title="", y_label="", x_label="\#iter",
 #         # [1:] to remove the first update (initialization update)
 #         cfg_val = [np.mean(update_time[i][1:iter_num]), np.std(update_time[i][1:iter_num])]
 #         barchart(i, cfg_val, blabel=conf_names[i], bcolor=col_dict[colors[i]])
-#     confPlot(plt, title="Update time", y_label="[sec]", x_label="", leg_loc='upper right')
+#     configure_plot(plt, title="Update time", y_label="[sec]", x_label="", leg_loc='upper right')
 
 ############################## AutoEncoder
 if len(ae_metrics) != 0:
@@ -130,12 +133,12 @@ if len(ae_metrics) != 0:
     for i in range(num_confs):
         pplot(ae_metrics[i][:iter_num, 0], blabel=conf_names[i], bcolor=col_dict[colors[orange]])
     cfg_val = [np.mean(update_time[0][1:iter_num]), np.std(update_time[0][1:iter_num])]
-    confPlot(plt, title="AutoEncoder", y_label="loss", leg_loc='upper left')
+    configure_plot(plt, title="AutoEncoder", y_label="loss", leg_loc='upper left', save_dir=save_paths[i])
 
     # plt.figure()
     # for i in range(num_confs):
     #     pplot(ae_metrics[i][:iter_num, 1], blabel=conf_names[i], bcolor=col_dict[colors[i]])
-    # confPlot(plt, title="AutoEncoder", y_label="accuracy", leg_loc='upper left')
+    # configure_plot(plt, title="AutoEncoder", y_label="accuracy", leg_loc='upper left')
 
 ############################## TF projector
 if len(gan_metrics) != 0:
@@ -143,12 +146,12 @@ if len(gan_metrics) != 0:
     orange = 4
     for i in range(num_confs):
         pplot(gan_metrics[i][:iter_num, 0], blabel=conf_names[i], bcolor=col_dict[colors[orange]])
-    confPlot(plt, title="AutoEncoder", y_label="loss", leg_loc='upper left')
+    configure_plot(plt, title="Transform projector", y_label="loss", leg_loc='upper left', save_dir=save_paths[i])
 
     # plt.figure()
     # for i in range(num_confs):
     #     pplot(gan_metrics[i][:iter_num, 1], blabel=conf_names[i], bcolor=col_dict[colors[i]])
-    # confPlot(plt, title="Transform", y_label="accuracy", leg_loc='upper left')
+    # configure_plot(plt, title="Transform", y_label="accuracy", leg_loc='upper left')
 
 ############################## GAN
 if len(gan_metrics) != 0:
@@ -158,14 +161,14 @@ if len(gan_metrics) != 0:
               blabel=conf_names[i] + " Dis", bcolor=col_dict['blue'], bmarker=markers[0])
         pplot(gan_metrics[i][:iter_num, 4],
               blabel=conf_names[i] + " Gen", bcolor=col_dict['red'], bmarker=markers[3])
-        confPlot(plt, title="GAN " + conf_names[i], y_label="loss", leg_loc='upper left')
+        configure_plot(plt, title="GAN " + conf_names[i], y_label="loss", leg_loc='upper left', save_dir=save_paths[i])
 
-        plt.figure()
-        pplot(gan_metrics[i][:iter_num, 3],
-              blabel=conf_names[i] + " Dis", bcolor=col_dict['purple'], bmarker=markers[0])
-        pplot(gan_metrics[i][:iter_num, 5],
-              blabel=conf_names[i] + " Gen", bcolor=col_dict['orange'], bmarker=markers[3])
-        confPlot(plt, title="GAN " + conf_names[i], y_label="accuracy", leg_loc='upper left')
+        # plt.figure()
+        # pplot(gan_metrics[i][:iter_num, 3],
+        #       blabel=conf_names[i] + " Dis", bcolor=col_dict['purple'], bmarker=markers[0])
+        # pplot(gan_metrics[i][:iter_num, 5],
+        #       blabel=conf_names[i] + " Gen", bcolor=col_dict['orange'], bmarker=markers[3])
+        # configure_plot(plt, title="GAN " + conf_names[i], y_label="accuracy", leg_loc='upper left')
 
 if args.show:
     plt.show()

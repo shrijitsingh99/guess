@@ -1,6 +1,7 @@
 #! /usr/bin/env python
 # coding: utf-8
 
+import datetime
 import socket
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -60,39 +61,64 @@ if __name__ == "__main__":
     print("| ----------------------------- |")
     print("| -- ScanGuesser test-socket -- |")
     print("| ----------------------------- |\n")
+
+    test_id='afmk'
     skt_pkg_scaling = 1000
-    scan_seq_size = 8
-    scan_generation_step = 10
-    scan_length = 512
+    minibuffer_batches_num = 3
+    scan_dim = 512
     clip_scans_at = 5.0
+    correlated_steps = 8
+    generation_step = 10
     module_rate = 1.0/30 # [1/freq]
     max_vel = 0.55  # [m/s]
-    max_dist_proj = max_vel*scan_generation_step*module_rate # [m]
-    rid = "diw"
-    save_prediction_rate = 100
-    # print("-- max distance projector:", max_dist_proj)
+    projector_max_dist = max_vel*generation_step*module_rate # [m]
 
-    guesser = ScanGuesser(scan_length, # number of scan beams considered
-                          net_model="ff",  # conv; lstm
-                          max_dist_projector=max_dist_proj,
-                          scan_res=0.00653590704, scan_fov=(3/2)*np.pi,
-                          scan_seq_sz=scan_seq_size,  # sequence of scans as input
-                          gen_step=scan_generation_step, # \# of 'scan steps' to look ahead
+    projector_lr = 1e-2
+
+    ae_lr = 1e-2
+    ae_batch_sz = 128
+    ae_latent_dim = 32
+
+    gan_discriminator_lr = 1e-3
+    gan_generator_lr = 1e-3
+    gan_batch_sz = 32
+    gan_noise_dim = 8
+    gan_smoothing_label_factor = 0.1
+
+    metrics_save_interleave = 100
+    cwd = os.path.dirname(os.path.abspath(__file__))
+    dtn = datetime.datetime.now()
+    dt = str(dtn.month) + "-" + str(dtn.day) + "_" + str(dtn.hour) + "-" + str(dtn.minute)
+    save_path_dir = '/home/sapienzbot/ws/guess/dataset/metrics/'
+
+    save_path_dir = os.path.join(save_path_dir, test_id + "_" + dt)
+    dataset_file = os.path.join(os.path.join(cwd, "../../dataset/"), "diag_underground.txt")
+
+    guesser = ScanGuesser(net_model="ff",  # conv; lstm
+                          scan_dim=scan_dim, scan_res=0.00653590704, scan_fov=(3/2)*np.pi,
+                          correlated_steps=correlated_steps, generation_step=generation_step,
+                          projector_max_dist=projector_max_dist,
+                          minibuffer_batches_num=minibuffer_batches_num,
                           clip_scans_at=clip_scans_at,  # max beam length [m]
-                          ae_fit=True, proj_fit=True, gan_fit=True,
-                          # autoencoder
-                          ae_epochs=10, ae_variational=True, ae_convolutional=True,
-                          ae_latent_dim=15,
-                          # gan
-                          gan_batch_sz=32, gan_train_steps=15, gan_noise_dim=2,
-                          start_update_thr=True, run_id=rid,
-                          metrics_save_rate=50)
-    guesser.init(None, init_models=True)
+                          fit_ae=True, fit_projector=True, fit_gan=True,
+                          # projector configs
+                          projector_lr=projector_lr,
+                          # autoencoder configs
+                          ae_lr=ae_lr, ae_batch_sz=ae_batch_sz, ae_epochs=20, ae_variational=True,
+                          ae_convolutional=False, ae_latent_dim=ae_latent_dim,
+                          # gan configs
+                          gan_batch_sz=gan_batch_sz, gan_train_steps=20, gan_noise_dim=gan_noise_dim,
+                          gan_smoothing_label_factor=gan_smoothing_label_factor,
+                          # run
+                          start_update_thr=False, verbose=False,
+                          metrics_save_path_dir=save_path_dir,
+                          metrics_save_interleave=metrics_save_interleave)
+    guesser.init(init_models=True)
 
-    # 6D velocity + timestamp in seconds
-    receiver = Receiver((7 + scan_length)*scan_seq_size, dport=9559)
+    # 2D velocity + timestamp in seconds
+    receiver = Receiver((3 + scan_dim)*correlated_steps, dport=9559)
     # generated and decoded scans + generated transform parameters
-    provider = Provider(scan_length*2 + 3, dport=9558)
+    provider = Provider(scan_dim*2 + 3, dport=9558)
 
     handshake_port = 9550
     print("-- Requesting modules handshake on localhost:" + str(handshake_port))
@@ -103,20 +129,21 @@ if __name__ == "__main__":
     i = 0
     while i < 10:
         i = i + 0
-        try: data_batch_srz = receiver.getData()*(1.0/skt_pkg_scaling)
+        try:
+            data_batch_srz = receiver.getData()*(1.0/skt_pkg_scaling)
         except Exception as e:
             print("Error", str(e))
             continue
 
-        scan_batch = data_batch_srz[:scan_seq_size*scan_length]
-        scan_batch = scan_batch.reshape(scan_seq_size, scan_length)
-        cmdv_batch = data_batch_srz[scan_seq_size*scan_length:]
-        cmdv_batch = cmdv_batch.reshape(scan_seq_size, 7)
+        scan_batch = data_batch_srz[:correlated_steps*scan_dim]
+        scan_batch = scan_batch.reshape(correlated_steps, scan_dim)
+        cmdv_batch = data_batch_srz[correlated_steps*scan_dim:]
+        cmdv_batch = cmdv_batch.reshape(correlated_steps, 7)
         ts_batch = cmdv_batch[:, -1:]
-        cmdv_batch = cmdv_batch[:, :-1]
+        cmdv_batch = cmdv_batch[:, ::5]
 
-        guesser.addRawScans(scan_batch, cmdv_batch, ts_batch)
-        gscan, vscan, hp = guesser.generateRawScan(scan_batch, cmdv_batch, ts_batch)
+        guesser.add_raw_scans(scan_batch, cmdv_batch, ts_batch)
+        gscan, vscan, hp = guesser.generate_raw_scan(scan_batch, cmdv_batch, ts_batch)
 
         try:
             to_send = np.concatenate((gscan, vscan[-1]))

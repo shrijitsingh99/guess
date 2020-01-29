@@ -245,13 +245,13 @@ class GAN:
 
     def generate(self, x):
         noise = (np.random.rand(1, self.noise_dim)*self.noise_magnitude) - 0.5*self.noise_magnitude
-        gen = self.generator.predict([noise, np.expand_dims(x, axis=0)])
-        return gen[0]
+        sample = self.generator.predict([noise, np.expand_dims(x, axis=0) if len(x.shape) == 2 else x])
+        return sample[0] if len(x.shape) == 2 else sample
 
 
 if __name__ == "__main__":
     # params
-    scan_n = 10000 # 34*8
+    scan_n = 10000
     scan_to_predict_idx = 1000
     scan_beam_num = 512
 
@@ -322,7 +322,7 @@ if __name__ == "__main__":
 
     rnd_indices = np.arange(dataset_dim)
     np.random.shuffle(rnd_indices)
-    metrics = gan.train(gan_x[rnd_indices], gan_y[rnd_indices], train_steps=10, batch_sz=gan_batch_sz, verbose=True)
+    metrics = gan.train(gan_x[rnd_indices], gan_y[rnd_indices], train_steps=100, batch_sz=gan_batch_sz, verbose=True)
 
     gen_latent = gan.generate(correlated_latent)
     gen_scan = ae.decode(gen_latent.reshape((1, latent_dim)))[0]

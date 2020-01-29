@@ -122,9 +122,9 @@ class LaserScans:
         ts = ts[:max_prev_row]
 
         prev_cmdv = cmdv.reshape((-1, correlated_steps, cmdv.shape[1]))
-        next_cmdv = np.array([cmdv[c:c + integration_step] for c in range(correlated_steps,
-                                                                          cmdv.shape[0] - integration_steps,
-                                                                          correlated_steps)], dtype=np.float32)
+        next_cmdv = np.array([cmdv[c:c + integration_steps] for c in range(correlated_steps,
+                                                                           cmdv.shape[0] - integration_steps,
+                                                                           correlated_steps)], dtype=np.float32)
         rows = min(prev_cmdv.shape[0], next_cmdv.shape[0])
         prev_cmdv = prev_cmdv[:rows]
         next_cmdv = next_cmdv[:rows]

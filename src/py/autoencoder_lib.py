@@ -94,8 +94,9 @@ class AutoEncoder:
         return decoder
 
     def build_model(self, lr=0.01):
-        if not self.ae is None:
+        if self.ae is not None:
             return self.ae
+
         input_shape = (self.original_dim,)
         depth = 32
         dropout = 0.1
