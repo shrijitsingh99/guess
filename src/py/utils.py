@@ -117,17 +117,15 @@ class LaserScans:
         assert cmdv.shape[0] >= correlated_steps + integration_steps \
             and cmdv.shape[0] == ts.shape[0]
 
-        max_prev_row = int(cmdv.shape[0]/correlated_steps)*correlated_steps
+        n_factor = correlated_steps + integration_steps
+        max_prev_row = int(cmdv.shape[0]/n_factor)*n_factor
         cmdv = cmdv[:max_prev_row]
         ts = ts[:max_prev_row]
 
-        prev_cmdv = cmdv.reshape((-1, correlated_steps, cmdv.shape[1]))
-        next_cmdv = np.array([cmdv[c:c + integration_steps] for c in range(correlated_steps,
-                                                                           cmdv.shape[0] - integration_steps,
-                                                                           correlated_steps)], dtype=np.float32)
-        rows = min(prev_cmdv.shape[0], next_cmdv.shape[0])
-        prev_cmdv = prev_cmdv[:rows]
-        next_cmdv = next_cmdv[:rows]
+        cmdv = cmdv.reshape((-1, n_factor, cmdv.shape[1]))
+        prev_cmdv = cmdv[..., :correlated_steps, :]
+        next_cmdv = cmdv[..., correlated_steps:, :]
+
         prev_ts = 0.33*np.ones_like(prev_cmdv[..., :1])
         correlated_cmdv = np.concatenate([prev_cmdv, prev_ts], axis=-1)
         _, next_transform = self.compute_transforms(next_cmdv, theta_axis=theta_axis)

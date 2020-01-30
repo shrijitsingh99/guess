@@ -178,22 +178,23 @@ class ScanGuesser:
         encodings = self.encode_scan(ae_x).reshape((-1, self.correlated_steps,
                                                     self.generator_input_shape[1] - cmd_vel.shape[-1]))
         next_encodings = self.encode_scan(next_x)
-        latent = np.concatenate([encodings, cmd_vel[..., :self.correlated_steps, :]], axis=-1)
+        correlated_cmdv = cmd_vel[..., :self.correlated_steps, :]
+        correlated_ts = 0.33*np.ones_like(correlated_cmdv[..., :1])
+        next_correlated_cmdv = cmd_vel[..., self.correlated_steps:, :]
 
-        correlated_cmdv, target_tf = self.ls.reshape_correlated_scans(cmd_vel.reshape((-1, cmd_vel.shape[-1])),
-                                                                      ts.reshape((-1, ts.shape[-1])),
-                                                                      correlated_steps=self.correlated_steps,
-                                                                      integration_steps=self.generation_step,
-                                                                      theta_axis=1, normalize_factor=self.projector_max_dist)
-        n_rows = min(latent.shape[0], correlated_cmdv.shape[0])
-        latent = latent[:n_rows]
-        next_encodings = next_encodings[:n_rows]
-        correlated_cmdv = correlated_cmdv[:n_rows]
-        target_tf = target_tf[:n_rows]
+        latent = np.concatenate([encodings, correlated_cmdv], axis=-1)
+        correlated_cmd = np.concatenate([correlated_cmdv, correlated_ts], axis=-1)
+        _, target_tf = self.compute_transforms(next_correlated_cmdv)
+
+        if self.projector_max_dist is not None:
+            target_tf[:, :2] = np.clip(target_tf[:, :2], a_min=-self.projector_max_dist,
+                                       a_max=self.projector_max_dist)/self.projector_max_dist
+            target_tf[:, 2] /= np.pi
 
         rnd_indices = np.arange(latent.shape[0])
         np.random.shuffle(rnd_indices)
-        projector_metrics = self.projector.train(correlated_cmdv[rnd_indices], target_tf[rnd_indices],
+
+        projector_metrics = self.projector.train(correlated_cmd[rnd_indices], target_tf[rnd_indices],
                                                  epochs=10) if self.fit_projector else np.zeros((2,))
         gan_metrics = self.gan.train(latent[rnd_indices], next_encodings[rnd_indices],
                                      train_steps=self.gan_train_steps, batch_sz=self.gan_batch_sz,
@@ -306,12 +307,13 @@ class ScanGuesser:
         generated_latent = self.gan.generate(latent)
         generated_scan = self.decode_scan(generated_latent, clip_max=clip_max, interpolate=False)[0]
 
-        cmd_vel = np.expand_dims(cmd_vel, axis=0)
-        correlated_cmdv = np.concatenate([cmd_vel, ts.reshape((1, ts.shape[0], 1,))], axis=-1)
-        generated_tf_params = self.projector.predict(correlated_cmdv)[0]
+        correlated_cmdv = np.expand_dims(cmd_vel, axis=0)
+        correlated_ts = 0.33*np.ones_like(correlated_cmdv[..., :1])
+        correlated_cmd = np.concatenate([correlated_cmdv, correlated_ts], axis=-1)
+        generated_tf_params = self.projector.predict(correlated_cmd)[0]
 
-        generated_tf_params[..., :2] = generated_tf_params[..., :2]*self.projector_max_dist
-        generated_tf_params[..., 2] = generated_tf_params[..., 2]*np.pi
+        generated_tf_params[..., :2] *= self.projector_max_dist
+        generated_tf_params[..., 2] *= np.pi
 
         if self.verbose:
             print("-- Prediction in", timer.secs())
@@ -378,7 +380,7 @@ if __name__ == "__main__":
     test_id='afmk'
 
     scan_to_predict_idx = 1000
-    minibuffer_batches_num = 3
+    minibuffer_batches_num = 5
     correlated_steps = 8
     generation_step = 10
 
@@ -394,7 +396,7 @@ if __name__ == "__main__":
     gan_noise_dim = 8
     gan_smoothing_label_factor = 0.1
 
-    save_experiment = True
+    save_experiment = False
     cwd = os.path.dirname(os.path.abspath(__file__))
     dtn = datetime.datetime.now()
     dt = str(dtn.month) + "-" + str(dtn.day) + "_" + str(dtn.hour) + "-" + str(dtn.minute)
@@ -405,7 +407,7 @@ if __name__ == "__main__":
     guesser = ScanGuesser(net_model="conv",  # conv; lstm
                           scan_dim=512, scan_res=0.00653590704, scan_fov=(3/2)*np.pi,
                           correlated_steps=correlated_steps, generation_step=generation_step,
-                          projector_max_dist=generation_step*0.03*0.5,
+                          projector_max_dist=generation_step*0.3*0.5,
                           minibuffer_batches_num=minibuffer_batches_num,
                           fit_ae=True, fit_projector=True, fit_gan=True,
                           # projector configs
@@ -446,10 +448,10 @@ if __name__ == "__main__":
     while not guesser.simulate_step():
         continue
 
-    nsteps = 100
+    nsteps = 50
     for i in range(nsteps):
         if guesser.simulate_step():
-            if i % int(0.45*nsteps) == 0:
+            if i % int(0.45*nsteps) == 0 and False:
                 gscan, dscan, _ = guesser.generate_scan(scans[prediction_input_slice], cmdv[prediction_input_slice],
                                                         ts[prediction_input_slice], clip_max=False)
 
