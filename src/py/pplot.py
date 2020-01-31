@@ -64,10 +64,19 @@ assert len(conf_names) == num_confs, "input dimensions mismatch"
 save_paths = [os.path.join(base_path, m + '/metrics/') for m in args.rid]
 ae_metrics = [np.load(base_path + m + "/ae_mets.npy") for m in args.rid
               if os.path.isfile(base_path + m + "/ae_mets.npy")]
-gan_metrics = [np.load(base_path + m + "/gan-tf_mets.npy") for m in args.rid
-               if os.path.isfile(base_path + m + "/gan-tf_mets.npy")]
+encodings_accuracy = [np.load(base_path + m + "/encoding_accuracy.npy") for m in args.rid
+                      if os.path.isfile(base_path + m + "/encoding_accuracy.npy")]
+# gan_metrics = [np.load(base_path + m + "/gan-tf_mets.npy") for m in args.rid
+#                if os.path.isfile(base_path + m + "/gan-tf_mets.npy")]
+gan_metrics = [np.load(base_path + m + "/generation-loss.npy") for m in args.rid
+               if os.path.isfile(base_path + m + "/generation-loss.npy")]
+generation_accuracy = [np.load(base_path + m + "/generation_accuracy.npy") for m in args.rid
+                      if os.path.isfile(base_path + m + "/generation_accuracy.npy")]
+tf_accuracy = [np.load(base_path + m + "/tf_accuracy.npy") for m in args.rid
+               if os.path.isfile(base_path + m + "/tf_accuracy.npy")]
 update_time = [np.load(base_path + m + "/update_time.npy")[:, 0] for m in args.rid
                if os.path.isfile(base_path + m + "/update_time.npy")]
+
 iter_num = min([x.shape[0] for x in update_time])
 iter_num = min(iter_num, args.maxit) if args.maxit != -1 else iter_num
 
@@ -82,20 +91,33 @@ def barchart(idx, value, blabel="", bcolor=col_dict["blue"], alpha_ch=0.95):
 
 
 def pplot(value, blabel="", bcolor=col_dict["blue"], col_shade=0.9, line_width=1.2,
-          bmarker=markers[0], marker_sz=7, mark_at=50):
-    plt.plot(value, lw=line_width, linestyle='-', color=col_shade*bcolor,
-             marker=bmarker, markersize=marker_sz, markevery=mark_at, label=blabel)
+          bmarker=markers[0], marker_sz=7, mark_at=50, compute_moving_mean=True):
+    if compute_moving_mean:
+        plt.plot(value, lw=0.8, linestyle='-', color=0.99*bcolor)
+
+        moving_window_sz = 50
+        moving_mean = np.array([np.mean(value[slice(None if m - moving_window_sz < 0 else m - moving_window_sz, m, None)])
+                                for m in range(0, value.shape[0], 1)])
+
+        plt.plot(moving_mean, lw=line_width, linestyle='-', color=col_shade*bcolor,
+                 marker=bmarker, markersize=marker_sz, markevery=mark_at, label=blabel)
+    else:
+        plt.plot(value, lw=line_width, linestyle='-', color=col_shade*bcolor,
+                 marker=bmarker, markersize=marker_sz, markevery=mark_at, label=blabel)
+
+
 
 
 def configure_plot(p, xticks=None, title="title", y_label="label", x_label="\#iter",
-                   font_sz=18, xt_step=1, leg_loc='lower right', save_dir=''):
+                   font_sz=18, xt_step=1, leg_loc='lower right', save_dir='', out_name=''):
     # font_sz = max(12, font_sz)
-    p.legend(loc=leg_loc, fontsize=font_sz - 4, ncol=3)
-    p.xlabel(x_label, fontsize=font_sz - 2)
-    p.ylabel(r'' + y_label, fontsize=font_sz - 4)
+    # p.legend(loc=leg_loc, fontsize=font_sz - 4, ncol=3)
+    p.xlabel(x_label, fontsize=font_sz)
+    # p.ylabel(r'' + y_label, fontsize=font_sz - 4)
     p.yticks(fontsize=font_sz - 4)
     p.title(r'' + title, fontsize=font_sz)
     p.tight_layout()
+    p.grid(color=np.array([210, 210, 210])/255.0, linestyle='--', linewidth=1)
 
     ax = p.gca()
     ax.grid(color='gainsboro', linestyle='--', linewidth=0.1, alpha=0.5)
@@ -113,8 +135,9 @@ def configure_plot(p, xticks=None, title="title", y_label="label", x_label="\#it
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
 
-        out_name = title + "_" + y_label + ".pdf"
-        out_name = out_name.lower().replace("]", "").replace("[", "").replace(" ", "_")
+        if len(out_name) == 0:
+            out_name = title + "_" + y_label + ".pdf"
+            out_name = out_name.lower().replace("]", "").replace("[", "").replace(" ", "_")
         p.savefig(os.path.join(save_dir, out_name), format='pdf')
 
 ############################## Update Time profiles
@@ -128,47 +151,54 @@ def configure_plot(p, xticks=None, title="title", y_label="label", x_label="\#it
 
 ############################## AutoEncoder
 if len(ae_metrics) != 0:
-    plt.figure()
-    orange = 4
+    plt.figure(figsize=(7, 8))
+    plt.subplot(2, 1, 1)
     for i in range(num_confs):
-        pplot(ae_metrics[i][:iter_num, 0], blabel=conf_names[i], bcolor=col_dict[colors[orange]])
+        pplot(ae_metrics[i][:iter_num, 0], blabel=conf_names[i], bcolor=col_dict[colors[i]], compute_moving_mean=False)
     cfg_val = [np.mean(update_time[0][1:iter_num]), np.std(update_time[0][1:iter_num])]
-    configure_plot(plt, title="AutoEncoder", y_label="loss", leg_loc='upper left', save_dir=save_paths[i])
+    configure_plot(plt, title="Loss", leg_loc='upper left') #, save_dir=save_paths[i])
 
-    # plt.figure()
-    # for i in range(num_confs):
-    #     pplot(ae_metrics[i][:iter_num, 1], blabel=conf_names[i], bcolor=col_dict[colors[i]])
-    # configure_plot(plt, title="AutoEncoder", y_label="accuracy", leg_loc='upper left')
+if len(encodings_accuracy) != 0:
+    plt.subplot(2, 1, 2)
+    color = 'orange'
+    for i in range(num_confs):
+        pplot(encodings_accuracy[i][:iter_num, 0], blabel=conf_names[i], bcolor=col_dict[color])
+    configure_plot(plt, title="Mean Abs. Error [m]", leg_loc='upper left', save_dir=save_paths[i], out_name='encoding_metrics.pdf')
 
 ############################## TF projector
-if len(gan_metrics) != 0:
-    plt.figure()
-    orange = 4
-    for i in range(num_confs):
-        pplot(gan_metrics[i][:iter_num, 0], blabel=conf_names[i], bcolor=col_dict[colors[orange]])
-    configure_plot(plt, title="Transform projector", y_label="loss", leg_loc='upper left', save_dir=save_paths[i])
+# if len(gan_metrics) != 0:
+#     plt.figure()
+#     for i in range(num_confs):
+#         pplot(gan_metrics[i][:iter_num, 0], blabel=conf_names[i], bcolor=col_dict[colors[i]])
+#     configure_plot(plt, title="Transform projector", y_label="Loss", leg_loc='upper left', save_dir=save_paths[i])
 
-    # plt.figure()
-    # for i in range(num_confs):
-    #     pplot(gan_metrics[i][:iter_num, 1], blabel=conf_names[i], bcolor=col_dict[colors[i]])
-    # configure_plot(plt, title="Transform", y_label="accuracy", leg_loc='upper left')
+# if len(tf_accuracy) != 0:
+#     plt.figure()
+#     for i in range(num_confs):
+#         pplot(tf_accuracy[i][:iter_num, 0], blabel=conf_names[i], bcolor=col_dict[colors[i]])
+#     configure_plot(plt, title="Transform projector", y_label="Error", leg_loc='upper left', save_dir=save_paths[i])
 
 ############################## GAN
 if len(gan_metrics) != 0:
-    for i in range(num_confs):
-        plt.figure()
-        pplot(gan_metrics[i][:iter_num, 2],
-              blabel=conf_names[i] + " Dis", bcolor=col_dict['blue'], bmarker=markers[0])
-        pplot(gan_metrics[i][:iter_num, 4],
-              blabel=conf_names[i] + " Gen", bcolor=col_dict['red'], bmarker=markers[3])
-        configure_plot(plt, title="GAN " + conf_names[i], y_label="loss", leg_loc='upper left', save_dir=save_paths[i])
+    plt.figure(figsize=(7, 8))
+    plt.subplot(2, 1, 1)
+    # import pdb; pdb.set_trace()
 
-        # plt.figure()
-        # pplot(gan_metrics[i][:iter_num, 3],
-        #       blabel=conf_names[i] + " Dis", bcolor=col_dict['purple'], bmarker=markers[0])
-        # pplot(gan_metrics[i][:iter_num, 5],
-        #       blabel=conf_names[i] + " Gen", bcolor=col_dict['orange'], bmarker=markers[3])
-        # configure_plot(plt, title="GAN " + conf_names[i], y_label="accuracy", leg_loc='upper left')
+    for i in range(num_confs):
+        pplot(gan_metrics[i][:iter_num-10],
+              blabel=conf_names[i] + " Dis", bcolor=col_dict['blue'], bmarker=markers[0])
+        pplot(gan_metrics[i][500:500+iter_num],
+              blabel=conf_names[i] + " Gen", bcolor=col_dict['red'], bmarker=markers[3])
+        configure_plot(plt, title="Loss", leg_loc='upper left') #, save_dir=save_paths[i])
+
+if len(generation_accuracy) != 0:
+    plt.subplot(2, 1, 2)
+    color = 'orange'
+    for i in range(num_confs):
+        pplot(generation_accuracy[i][:iter_num, 0],
+              blabel=conf_names[i] + " Gen", bcolor=col_dict[color], bmarker=markers[3])
+    configure_plot(plt, title="Mean Abs. Error [m]",
+                   leg_loc='upper left', save_dir=save_paths[i], out_name='generation_metrics.pdf')
 
 if args.show:
     plt.show()
