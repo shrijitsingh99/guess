@@ -49,8 +49,7 @@ class GAN:
         # Build and compile the discriminator
         optimizer = Adam(lr=discriminator_lr, beta_1=0.5, decay=3e-8)
         self.discriminator = self.build_multiply_noise_discriminator() if multiply_noise else self.build_discriminator()
-        self.discriminator.compile(loss=['binary_crossentropy'], optimizer=optimizer,
-                                   metrics=['accuracy'])
+        self.discriminator.compile(loss=['binary_crossentropy'], optimizer=optimizer, metrics=['accuracy'])
 
         # Build the generator
         self.generator = self.build_multiply_noise_generator() if multiply_noise else self.build_generator()
@@ -215,7 +214,7 @@ class GAN:
 
         metrics = []
         for t in range(train_steps):
-            d_loss, d_acc, a_loss, a_acc = 0., 0., 0., 0.
+            d_loss, d_acc, a_loss = 0., 0., 0.
 
             for b in range(0, dataset_n_samples, batch_sz):
                 batch_slice = slice(b, b + batch_sz, None)
@@ -252,22 +251,29 @@ class GAN:
 if __name__ == "__main__":
     # params
     scan_n = 10000
-    scan_to_predict_idx = 1000
-    scan_beam_num = 512
+    dataset_name = 'diag_first_floor.txt'
+    plot_indices = {
+        'diag_first_floor.txt': [1000, 1500],
+        'diag_underground.txt': [1000, 6500],
+        'diag_labrococo.txt': [800],
+    }
+    scan_to_predict_idx = plot_indices[dataset_name][0]
 
+    scan_beam_num = 512
     latent_dim = 32
     correlated_sequence_step = 8
     prediction_step = 8
 
     ae_batch_sz = 256
-    ae_epochs = 20
+    ae_epochs = 100
 
-    gan_noise_dim = 8
+    gan_noise_dim = 1
     gan_batch_sz = 32
+    gan_train_steps = 500
+    gan_predict_encodings = False
 
-    # diag_first_floor.txt ; diag_underground.txt ; diag_labrococo.txt
     cwd = os.path.dirname(os.path.abspath(__file__))
-    dataset_file = os.path.join(os.path.join(cwd, "../../dataset/"), "diag_underground.txt")
+    dataset_file = os.path.join(os.path.join(cwd, "../../dataset/"), dataset_name)
 
     # ---- laser-scans
     ls = LaserScans(verbose=True)
@@ -306,14 +312,18 @@ if __name__ == "__main__":
 
     # ---- gan - generating latent spaces
     gan = GAN(verbose=True)
-    gan.build_model(discriminator_input_shape=(latent_dim,),
-                    generator_input_shape=(correlated_sequence_step, latent_dim + cmdv_dim),
-                    discriminator_lr=1e-3, generator_lr=1e-3, smoothing_factor=0.1,
+    gan.build_model(discriminator_input_shape=(latent_dim if gan_predict_encodings else scan_beam_num,),
+                    generator_input_shape=(correlated_sequence_step, latent_dim + cmdv_dim,),
+                    discriminator_lr=1e-2, generator_lr=1e-4, smoothing_factor=0.,
                     noise_dim=gan_noise_dim, noise_magnitude=1., model_id="conv")
 
     latent = np.concatenate([encoded_scans, cmdv], axis=-1)
     gan_x = latent.reshape((-1, correlated_sequence_step, latent_dim + cmdv_dim))
-    gan_y = encoded_scans[(correlated_sequence_step + prediction_step)::correlated_sequence_step]
+
+    if gan_predict_encodings:
+        gan_y = encoded_scans[(correlated_sequence_step + prediction_step)::correlated_sequence_step]
+    else:
+        gan_y = scans[(correlated_sequence_step + prediction_step)::correlated_sequence_step]
     # [plt.plot(gan_y[int(np.random.rand() * gan_y.shape[0])]) for _ in range(10)]
 
     dataset_dim = min(gan_x.shape[0], gan_y.shape[0])
@@ -322,27 +332,43 @@ if __name__ == "__main__":
 
     rnd_indices = np.arange(dataset_dim)
     np.random.shuffle(rnd_indices)
-    metrics = gan.train(gan_x[rnd_indices], gan_y[rnd_indices], train_steps=100, batch_sz=gan_batch_sz, verbose=True)
+    metrics = gan.train(gan_x[rnd_indices], gan_y[rnd_indices], train_steps=gan_train_steps,
+                        batch_sz=gan_batch_sz, verbose=True)
 
-    gen_latent = gan.generate(correlated_latent)
-    gen_scan = ae.decode(gen_latent.reshape((1, latent_dim)))[0]
+    if gan_predict_encodings:
+        gen_out = gan.generate(correlated_latent)
+        gen_scan = ae.decode(gen_out.reshape((1, latent_dim)))[0]
+    else:
+        gen_out = gan.generate(correlated_latent)
+        gen_scan = gen_out
 
     plt.title('Metrics')
-    plt.plot(metrics[:, 0], label='D-loss')
-    # plt.plot(metrics[:, 1], label='D-acc')
-    plt.plot(metrics[:, 2], label='A-loss')
+    color_dict = {
+        "red" : np.array([251, 180, 174])/255.0,
+        "blue" : np.array([179, 205, 227])/255.0,
+    }
+    markers = ['^', 'o', 's', '*', '+']
+
+    plt.plot(metrics[:, 0], label='Discriminator', lw=1.2, color=0.9*color_dict['red'],
+             marker=markers[0], markersize=7, markevery=50)
+    plt.plot(metrics[:, 2], label='Generator', lw=1.2, color=0.9*color_dict['blue'],
+             marker=markers[3], markersize=7, markevery=50)
+    plt.grid(color=np.array([210, 210, 210])/255.0, linestyle='--', linewidth=1)
     plt.legend()
+
+    np.save('/home/sapienzbot/Desktop/rss_guess_res/generation-loss.npy', np.concatenate([metrics[:, 0], metrics[:, 2]], axis=-1))
 
     plt.figure()
     plt.title('Latent %d' % scan_to_predict_idx)
-    plt.plot(gen_latent, label='generated')
-    plt.plot(encoded_scans[scan_to_predict_idx], label='target')
+    plt.plot(gen_out, label='generated')
+    plt.plot(encoded_scans[scan_to_predict_idx] if gan_predict_encodings else scans[scan_to_predict_idx], label='target')
     plt.legend()
 
-    ls.plot_scans([
-        (scans[scan_to_predict_idx], '#e41a1c', 'scan'),
-        (decoded_scans[scan_to_predict_idx], '#ff7f0e', 'decoded'),
-        (gen_scan, '#1f77b4', 'generated')], title='scans')
+    [ls.plot_scans([(scans[i], '#e41a1c', 'scan'),
+                    (decoded_scans[i], '#ff7f0e', 'decoded'),
+                    (gen_scan, '#1f77b4', 'generated')], title='scans')
+     for i in plot_indices[dataset_name]]
+
     plt.show()
 
 

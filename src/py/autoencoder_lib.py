@@ -165,16 +165,22 @@ class AutoEncoder:
         return self.decoder.predict(z_mean)
 
 if __name__ == "__main__":
-    batch_sz = 128
-    scan_n = 10000
-    plot_idx = 1000
+    batch_sz = 256
+    scan_n = 5000
     learning_rate = 0.01
     latent_dim = 32
-    epochs = 20
+    epochs = 100
 
-    # diag_first_floor.txt ; diag_underground.txt ; diag_labrococo.txt
+    dataset_name = 'diag_first_floor.txt'
+    plot_indices = {
+        'diag_first_floor.txt': [1000, 1500],
+        'diag_underground.txt': [1000, 6500],
+        'diag_labrococo.txt': [800, 2499],
+    }
+
+
     cwd = os.path.dirname(os.path.abspath(__file__))
-    dataset_file = os.path.join(os.path.join(cwd, "../../dataset/"), "diag_underground.txt")
+    dataset_file = os.path.join(os.path.join(cwd, "../../dataset/"), dataset_name)
 
     ls = LaserScans(verbose=True)
     ls.load(dataset_file, scan_res=0.00653590704, scan_fov=(3/2)*np.pi,
@@ -191,17 +197,14 @@ if __name__ == "__main__":
     ae.train(x[rnd_indices], epochs=1)
     print('-- step 0: Fitting VAE model done.')
 
-    decoded_x = ae.decode(ae.encode(x))
-    ls.plot_scans([
-        (x[plot_idx], '#e41a1c', 'scan'),
-        (decoded_x[plot_idx], '#ff7f0e', 'decoded')])
+    # decoded_x = ae.decode(ae.encode(x))
+    # ls.plot_scans([(x[plot_idx], '#e41a1c', 'scan'), (decoded_x[plot_idx], '#ff7f0e', 'decoded')])
 
     np.random.shuffle(rnd_indices)
-    ae.train(x[rnd_indices], epochs=epochs, verbose=0)
+    metrics = ae.train(x[rnd_indices], epochs=epochs, verbose=0)
     print('-- step 1: Fitting VAE model done.')
 
     decoded_x = ae.decode(ae.encode(x))
-    ls.plot_scans([
-        (x[plot_idx], '#e41a1c', 'scan'),
-        (decoded_x[plot_idx], '#ff7f0e', 'decoded')])
+    [ls.plot_scans([(x[i], '#e41a1c', 'scan'), (decoded_x[i], '#ff7f0e', 'decoded')])
+     for i in plot_indices[dataset_name]]
     plt.show()

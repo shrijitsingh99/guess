@@ -28,19 +28,17 @@ class MetricsSaver:
         self.save_path = save_path
         self.met_dict = {}
 
-    def add(self, mid, mrow):
-        if len(mrow.shape) != 1:
-            return
+    def add(self, metric_name, metric_result):
+        metric_result = metric_result.reshape((1, metric_result.shape[-1]))
 
-        if mid in self.met_dict.keys():
-            if self.met_dict[mid][0].shape != mrow.shape: return
-            self.met_dict[mid] = np.vstack((self.met_dict[mid], mrow))
+        if metric_name in self.met_dict.keys():
+            self.met_dict[metric_name] = np.vstack([self.met_dict[metric_name], metric_result])
         else:
-            self.met_dict[mid] = mrow.reshape(1, mrow.shape[0])
+            self.met_dict[metric_name] = metric_result
 
     def save(self):
-        for mid, met in self.met_dict.items():
-            np.save(os.path.join(self.save_path, mid + ".npy"), met)
+        for metric_name, met in self.met_dict.items():
+            np.save(os.path.join(self.save_path, metric_name + ".npy"), met)
 
 
 class ElapsedTimer:
@@ -48,6 +46,8 @@ class ElapsedTimer:
         self.start_time = time.time()
     def __elapsed(self, sec):
         return round(sec, 2)
+    def msecs(self):
+        return self.__elapsed((time.time() - self.start_time)*1000)
     def secs(self):
         return self.__elapsed(time.time() - self.start_time)
 
@@ -233,7 +233,6 @@ class LaserScans:
         for spec in plot_scan_specs:
             assert spec[0].shape[0] == self.scan_beam_num, "Wrong scan size."
 
-        x_axis = np.arange(self.scan_beam_num)
         theta = self.scan_res*np.arange(-0.5*self.scan_beam_num, 0.5*self.scan_beam_num)
         theta = theta[::-1]
 
@@ -246,11 +245,11 @@ class LaserScans:
 
         for spec in plot_scan_specs:
             scan, color, name = spec
-            for s, segment in enumerate(self.get_scan_segments(scan, 0.99)):
+            for s, segment in enumerate(self.get_scan_segments(scan, 0.9)):
                 if not segment[2]:
                     segment_slice = slice(segment[0], segment[1], None)
-                    plt.plot(theta[segment_slice], scan[segment_slice], 'o', markersize=0.5,
-                             color=color, label=name if s == 0 else None)
+                    plt.plot(theta[segment_slice], scan[segment_slice],
+                             'o', markersize=0.5, color=color, label=name if s == 0 else None)
         plt.legend()
 
         if len(fig_path) > 0:

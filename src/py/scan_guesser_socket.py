@@ -64,7 +64,7 @@ if __name__ == "__main__":
 
     test_id='afmk'
     skt_pkg_scaling = 1000
-    minibuffer_batches_num = 3
+    minibuffer_batches_num = 5
     scan_dim = 512
     clip_scans_at = 5.0
     correlated_steps = 8
@@ -99,6 +99,7 @@ if __name__ == "__main__":
                           correlated_steps=correlated_steps, generation_step=generation_step,
                           projector_max_dist=projector_max_dist,
                           minibuffer_batches_num=minibuffer_batches_num,
+                          buffer_max_size=20,
                           clip_scans_at=clip_scans_at,  # max beam length [m]
                           fit_ae=True, fit_projector=True, fit_gan=True,
                           # projector configs
@@ -110,7 +111,7 @@ if __name__ == "__main__":
                           gan_batch_sz=gan_batch_sz, gan_train_steps=20, gan_noise_dim=gan_noise_dim,
                           gan_smoothing_label_factor=gan_smoothing_label_factor,
                           # run
-                          start_update_thr=False, verbose=False,
+                          start_update_thr=True, verbose=False,
                           metrics_save_path_dir=save_path_dir,
                           metrics_save_interleave=metrics_save_interleave)
     guesser.init(init_models=True)

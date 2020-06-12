@@ -52,11 +52,12 @@ class ScanGuesser:
         self.generator_input_shape = (self.correlated_steps, ae_latent_dim + 2)
         self.data_buffer = {}
         self.thr_data_buffer = {}
-        self.data_buffer_max_size = buffer_max_size*(self.gan_batch_sz*self.correlated_steps) + self.generation_step
+        self.data_buffer_max_size = buffer_max_size*self.gan_batch_sz
         self.minibuffer_batches_num = minibuffer_batches_num
         self.sim_step = 0
         self.metrics_step = 0
         self.metrics_save_interleave = metrics_save_interleave
+        self.train_step = 0
 
         if len(metrics_save_path_dir) == 0:
             self.ms = None
@@ -131,14 +132,16 @@ class ScanGuesser:
             scans, next_scans, cmdv, ts = None, None, None, None
 
             self.update_mtx.acquire()
-            scans = self.thr_data_buffer['scans']
-            next_scans = self.thr_data_buffer['next_scans']
-            cmdv = self.thr_data_buffer['cmdv']
-            ts = self.thr_data_buffer['ts']
-            self.thr_data_buffer = {}
+            if all(x in self.thr_data_buffer for x in ['scans', 'next_scans', 'cmdv', 'ts']):
+                scans = self.thr_data_buffer['scans'].copy()
+                next_scans = self.thr_data_buffer['next_scans'].copy()
+                cmdv = self.thr_data_buffer['cmdv'].copy()
+                ts = self.thr_data_buffer['ts'].copy()
+
+                self.thr_data_buffer.clear()
             self.update_mtx.release()
 
-            if all(x is not None for x in [scans, cmdv, ts]):
+            if all(x is not None for x in [scans, next_scans, cmdv, ts]):
                 self.update_mtx.acquire()
                 self.updating_model = True
                 self.update_mtx.release()
@@ -149,31 +152,61 @@ class ScanGuesser:
 
         print("-- Terminating update thread.")
 
-    def compute_transform(self, cmdv):
-        return self.ls.compute_transform(cmdv, theta_axis=1)
+    def add_scans(self, scans, cmd_vel, ts):
+        if scans.shape[0] < self.correlated_steps:
+            return False
 
-    def compute_transforms(self, cmdv):
-        return self.ls.compute_transforms(cmdv, theta_axis=1)
+        if self.start_update_thr and self.updating_model:
+            return False
 
-    # def _reshape_gan_input(self, encodings, cmd_vel, ts):
-    #     latent = np.concatenate([encodings, cmd_vel], axis=-1)
-    #     n_rows = int(latent.shape[0]/self.correlated_steps)*self.correlated_steps
-    #     latent = latent[:n_rows].reshape((-1, self.correlated_steps, self.generator_input_shape[1]))
-    #     correlated_cmdv, target_tf = self.ls.reshape_correlated_scans(cmd_vel, ts,
-    #                                                                   correlated_steps=self.correlated_steps,
-    #                                                                   integration_steps=self.generation_step,
-    #                                                                   theta_axis=1, normalize_factor=self.projector_max_dist)
-    #     n_rows = min(latent.shape[0], correlated_cmdv.shape[0])
-    #     return latent[:n_rows], correlated_cmdv[:n_rows], target_tf[:n_rows]
+        if len(self.data_buffer) == 0: # or len(self.data_buffer) == self.data_buffer_max_size:
+            self.data_buffer['scans'] = None
+            self.data_buffer['cmdv'] = None
+            self.data_buffer['ts'] = None
 
-    def _train_autoencoder(self, x, verbose=None):
-        verbose = int(self.verbose if verbose is None else verboser)
-        x = x.reshape((-1, x.shape[-1]))
-        rnd_indices = np.arange(x.shape[0])
-        np.random.shuffle(rnd_indices)
-        return self.ae.train(x[rnd_indices], epochs=self.ae_epochs, verbose=verbose) if self.fit_ae else np.zeros((2,))
+        self.data_buffer['scans'] = scans if self.data_buffer['scans'] is None else \
+                                    np.vstack([self.data_buffer['scans'], scans])
+        self.data_buffer['cmdv'] = cmd_vel if self.data_buffer['cmdv'] is None else \
+                                   np.vstack([self.data_buffer['cmdv'], cmd_vel])
+        self.data_buffer['ts'] = ts if self.data_buffer['ts'] is None else \
+                                 np.vstack([self.data_buffer['ts'], ts])
 
-    def _train_gan(self, x, next_x, cmd_vel, ts, verbose=False):
+        bn = self.minibuffer_batches_num
+        min_correlated_data_num = self.gan_batch_sz*self.correlated_steps
+        minibuffer_size = bn*min_correlated_data_num + self.generation_step
+
+        buffer_scans = self.data_buffer['scans']
+        buffer_cmdv = self.data_buffer['cmdv']
+        buffer_ts = self.data_buffer['ts']
+
+        if buffer_scans.shape[0] < minibuffer_size:
+            return False
+
+        rnd_idx = np.random.randint(buffer_scans.shape[0] - (self.correlated_steps + self.generation_step + 1),
+                                    size=(bn*self.gan_batch_sz - 1)).tolist()
+
+        scans = np.array([buffer_scans[i:i + self.correlated_steps] for i in rnd_idx], dtype=np.float32)
+        next_scans = np.array([buffer_scans[i + self.correlated_steps + self.generation_step] for i in rnd_idx], dtype=np.float32)
+        cmdv = np.array([buffer_cmdv[i:i + self.correlated_steps + self.generation_step] for i in rnd_idx], dtype=np.float32)
+        ts = np.array([buffer_ts[i:i + self.correlated_steps + self.generation_step] for i in rnd_idx], dtype=np.float32)
+
+        if self.start_update_thr:
+            self.update_mtx.acquire()
+            self.thr_data_buffer.clear()
+            self.thr_data_buffer.update({'scans': scans, 'next_scans': next_scans, 'cmdv': cmdv, 'ts': ts})
+            self.update_mtx.release()
+        else:
+            self._train(scans, next_scans, cmdv, ts, verbose=False)
+
+        return True
+
+    def _train(self, x, next_x, cmd_vel, ts, verbose=False):
+        print("-- Update model... step =", self.train_step, ' ', end='')
+        self.train_step += 1
+
+        timer = ElapsedTimer()
+        ae_metrics = self._train_autoencoder(x)
+
         ae_x = x.reshape((-1, x.shape[-1]))
         encodings = self.encode_scan(ae_x).reshape((-1, self.correlated_steps,
                                                     self.generator_input_shape[1] - cmd_vel.shape[-1]))
@@ -191,22 +224,8 @@ class ScanGuesser:
                                        a_max=self.projector_max_dist)/self.projector_max_dist
             target_tf[:, 2] /= np.pi
 
-        rnd_indices = np.arange(latent.shape[0])
-        np.random.shuffle(rnd_indices)
+        gan_metrics = self._train_gan(latent, next_encodings, correlated_cmd, target_tf)
 
-        projector_metrics = self.projector.train(correlated_cmd[rnd_indices], target_tf[rnd_indices],
-                                                 epochs=10) if self.fit_projector else np.zeros((2,))
-        gan_metrics = self.gan.train(latent[rnd_indices], next_encodings[rnd_indices],
-                                     train_steps=self.gan_train_steps, batch_sz=self.gan_batch_sz,
-                                     verbose=verbose) if self.fit_gan else np.zeros((3,))
-
-        return np.concatenate([projector_metrics, np.mean(gan_metrics, axis=0)], axis=-1)
-
-    def _train(self, x, next_x, cmd_vel, ts, verbose=False):
-        print("-- Update model... ", end='')
-        timer = ElapsedTimer()
-        ae_metrics = self._train_autoencoder(x)
-        gan_metrics = self._train_gan(x, next_x, cmd_vel, ts)
         elapsed_secs = timer.secs()
         print("done (\033[1;32m" + str(elapsed_secs) + "s\033[0m).")
         print("  -- AE loss:", ae_metrics[0], "- acc:", ae_metrics[1])
@@ -221,56 +240,51 @@ class ScanGuesser:
                 self.ms.add("gan-tf_mets", gan_metrics)
             self.ms.add("update_time", np.array([elapsed_secs]))
 
+            generated_scan, decoded_scan, generated_tf = self.generate_scan(x[0],
+                                                                            cmd_vel[0, :self.correlated_steps], ts)
+            encoding_error = abs(self.decode_scan(encodings[0]) - x[0])
+            generation_error = abs(next_x[0] - generated_scan)
+            tf_error = abs(target_tf[0] - generated_tf)
+
+            encoding_accuracy = np.array([np.mean(encoding_error)*self.projector_max_dist,
+                                                np.std(encoding_error)])
+            generation_accuracy = np.array([np.mean(generation_error)*self.projector_max_dist,
+                                                  np.std(generation_error)])
+            tf_accuracy = np.array([np.mean(tf_error), np.std(tf_error)])
+
+            self.ms.add('encoding_accuracy', encoding_accuracy[np.newaxis])
+            self.ms.add('generation_accuracy', generation_accuracy[np.newaxis])
+            # self.ms.add('tf_accuracy', tf_accuracy[np.newaxis])
+
             if (self.metrics_step + 1) % self.metrics_save_interleave == 0:
                 self.ms.save()
         else:
             [sys.stdout.write("\033[F\033[K") for _ in range(4) if not self.verbose and elapsed_secs < 5.0]
         self.metrics_step += 1
 
-    def add_scans(self, scans, cmd_vel, ts):
-        if scans.shape[0] < self.correlated_steps:
-            return False
+    def _train_autoencoder(self, x, verbose=None):
+        verbose = int(self.verbose if verbose is None else verboser)
+        x = x.reshape((-1, x.shape[-1]))
+        rnd_indices = np.arange(x.shape[0])
+        np.random.shuffle(rnd_indices)
+        return self.ae.train(x[rnd_indices], epochs=self.ae_epochs, verbose=verbose) if self.fit_ae else np.zeros((2,))
 
-        if len(self.data_buffer) == 0:
-            self.data_buffer['scans'] = []
-            self.data_buffer['cmdv'] = []
-            self.data_buffer['ts'] = []
+    def _train_gan(self, x, next_x, correlated_cmd, target_tf, verbose=False):
+        rnd_indices = np.arange(x.shape[0])
+        np.random.shuffle(rnd_indices)
+        projector_metrics = self.projector.train(correlated_cmd[rnd_indices], target_tf[rnd_indices],
+                                                 epochs=10) if self.fit_projector else np.zeros((2,))
+        gan_metrics = self.gan.train(x[rnd_indices], next_x[rnd_indices],
+                                     train_steps=self.gan_train_steps, batch_sz=self.gan_batch_sz,
+                                     verbose=verbose) if self.fit_gan else np.zeros((1, 3))
 
-        self.data_buffer['scans'].append(scans)
-        self.data_buffer['cmdv'].append(cmd_vel)
-        self.data_buffer['ts'].append(ts)
+        return np.concatenate([projector_metrics, np.mean(gan_metrics, axis=0)], axis=-1)
 
-        bn = self.minibuffer_batches_num
-        min_correlated_data_num = self.gan_batch_sz*self.correlated_steps
-        minibuffer_size = bn*min_correlated_data_num + self.generation_step
+    def compute_transform(self, cmdv):
+        return self.ls.compute_transform(cmdv, theta_axis=1)
 
-        buffer_scans = np.concatenate([s for s in self.data_buffer['scans']], axis=0)
-        buffer_cmdv = np.concatenate([s for s in self.data_buffer['cmdv']], axis=0)
-        buffer_ts = np.concatenate([s for s in self.data_buffer['ts']], axis=0)
-
-        if buffer_scans.shape[0] < minibuffer_size:
-            return False
-
-        rnd_idx = np.random.randint(buffer_scans.shape[0] - (self.correlated_steps + self.generation_step + 1),
-                                    size=(bn*self.gan_batch_sz - 1)).tolist()
-
-        scans = np.array([buffer_scans[i:i + self.correlated_steps] for i in rnd_idx], dtype=np.float32)
-        next_scans = np.array([buffer_scans[i + self.correlated_steps + self.generation_step] for i in rnd_idx], dtype=np.float32)
-        cmdv = np.array([buffer_cmdv[i:i + self.correlated_steps + self.generation_step] for i in rnd_idx], dtype=np.float32)
-        ts = np.array([buffer_ts[i:i + self.correlated_steps + self.generation_step] for i in rnd_idx], dtype=np.float32)
-
-        if self.start_update_thr:
-            self.update_mtx.acquire()
-            if not self.updating_model:
-                self.thr_data_buffer['scans'] = scans
-                self.thr_data_buffer['next_scans'] = next_scans
-                self.thr_data_buffer['cmdv'] = cmdv
-                self.thr_data_buffer['ts'] = ts
-            self.update_mtx.release()
-        else:
-            self._train(scans, next_scans, cmdv, ts, verbose=False)
-
-        return True
+    def compute_transforms(self, cmdv):
+        return self.ls.compute_transforms(cmdv, theta_axis=1)
 
     def add_raw_scans(self, raw_scans, cmd_vel, ts):
         if raw_scans.shape[0] < self.correlated_steps:
@@ -292,10 +306,11 @@ class ScanGuesser:
 
         return decoded
 
-    def generate_scan(self, scans, cmd_vel, ts, clip_max=True):
+    def generate_scan(self, scans, cmd_vel, ts, clip_max=True, verbose=None):
         assert self.correlated_steps <= scans.shape[0], 'Not enough sample to generate scan latent.'
+        verbose = self.verbose if verbose is None else verbose
 
-        if self.verbose:
+        if verbose:
             timer = ElapsedTimer()
 
         encodings = self.encode_scan(scans)
@@ -315,8 +330,8 @@ class ScanGuesser:
         generated_tf_params[..., :2] *= self.projector_max_dist
         generated_tf_params[..., 2] *= np.pi
 
-        if self.verbose:
-            print("-- Prediction in", timer.secs())
+        if verbose:
+            print("-- Prediction in", timer.msecs())
 
         return generated_scan, decoded_scan, generated_tf_params
 
@@ -329,15 +344,15 @@ class ScanGuesser:
 
     def get_scans(self):
         return self.data_buffer['scans'] if 'scans' in self.data_buffer and \
-            self.data_buffer['scans'] > self.correlated_steps else self.ls.get_scans()
+            self.data_buffer['scans'].shape[0] > self.correlated_steps else self.ls.get_scans()
 
     def get_cmd_vel(self):
         return self.data_buffer['cmdv'] if 'cmdv' in self.data_buffer and \
-            self.data_buffer['cmdv'] > self.correlated_steps else self.ls.get_cmd_vel()[..., ::5]
+            self.data_buffer['cmdv'].shape[0] > self.correlated_steps else self.ls.get_cmd_vel()[..., ::5]
 
     def timesteps(self):
         return self.data_buffer['ts'] if 'ts' in self.data_buffer and \
-            self.data_buffer['ts'] > self.correlated_steps else self.ls.timesteps()
+            self.data_buffer['ts'].shape[0] > self.correlated_steps else self.ls.timesteps()
 
     def plot_scans(self, scan_specs, title, save_fig=""):
         self.ls.plot_scans(scan_specs, title=title, fig_path=save_fig)
@@ -346,6 +361,7 @@ class ScanGuesser:
         self.ls.plot_projections(scan, params=params, param_names=param_names, fig_path=save_fig)
 
     def save_fig_prediction(self, file_path):
+        assert False, 'save_fig_prediction deprecated.'
         scans_num = self.correlated_steps*self.gan_batch_sz + self.generation_step
         if self.b_scans.shape[0] < scans_num:
             return
@@ -377,34 +393,36 @@ class ScanGuesser:
 if __name__ == "__main__":
     print("ScanGuesser test-main")
     scan_n = 10000
-    test_id='afmk'
+    test_id='dff-ff'
 
     scan_to_predict_idx = 1000
-    minibuffer_batches_num = 5
+    minibuffer_batches_num = 8
     correlated_steps = 8
     generation_step = 10
 
-    projector_lr = 1e-2
+    projector_lr = 1e-4
 
-    ae_lr = 1e-2
-    ae_batch_sz = 128
+    ae_lr = 1e-4
+    ae_batch_sz = 32
     ae_latent_dim = 32
 
-    gan_discriminator_lr = 1e-3
-    gan_generator_lr = 1e-3
+    gan_discriminator_lr = 1e-4
+    gan_generator_lr = 1e-4
     gan_batch_sz = 32
     gan_noise_dim = 8
     gan_smoothing_label_factor = 0.1
 
-    save_experiment = False
+    save_experiment = True
     cwd = os.path.dirname(os.path.abspath(__file__))
     dtn = datetime.datetime.now()
     dt = str(dtn.month) + "-" + str(dtn.day) + "_" + str(dtn.hour) + "-" + str(dtn.minute)
     save_path_dir = os.path.join(cwd, "../../dataset/metrics/")
     save_path_dir = os.path.join(save_path_dir, test_id + "_" + dt) if save_experiment else ''
-    dataset_file = os.path.join(os.path.join(cwd, "../../dataset/"), "diag_underground.txt")
 
-    guesser = ScanGuesser(net_model="conv",  # conv; lstm
+    # diag_first_floor.txt ; diag_underground.txt ; diag_labrococo.txt
+    dataset_file = os.path.join(os.path.join(cwd, "../../dataset/"), "diag_first_floor.txt")
+
+    guesser = ScanGuesser(net_model="afmk",  # conv; lstm
                           scan_dim=512, scan_res=0.00653590704, scan_fov=(3/2)*np.pi,
                           correlated_steps=correlated_steps, generation_step=generation_step,
                           projector_max_dist=generation_step*0.3*0.5,
@@ -421,9 +439,7 @@ if __name__ == "__main__":
                           # run
                           start_update_thr=False, verbose=False,
                           metrics_save_path_dir=save_path_dir,
-                          metrics_save_interleave=20)
-
-    # diag_first_floor.txt ; diag_underground.txt ; diag_labrococo.txt
+                          metrics_save_interleave=1)
     guesser.init(dataset_file, init_models=True, init_batch_num=0, scan_offset=6)
 
     scans = guesser.get_scans()[:scan_n]
@@ -439,16 +455,16 @@ if __name__ == "__main__":
 
     save_pattern = '' if len(save_path_dir) == 0 else os.path.join(save_path_dir, 'it%d_gen.pdf')
 
-    guesser.plot_scans([(scan_to_predict, '#e41a1c', 'scan'),
-                        # (decoded_scans[scan_to_predict_idx], '#ff7f0e', 'decoded'),
-                        (gscan, '#1f77b4', 'generated')], title='it 0',
-                       save_fig=save_pattern if len(save_pattern) == 0 else save_pattern % 0)
+    # guesser.plot_scans([(scan_to_predict, '#e41a1c', 'scan'),
+    #                     # (decoded_scans[scan_to_predict_idx], '#ff7f0e', 'decoded'),
+    #                     (gscan, '#1f77b4', 'generated')], title='it 0',
+    #                    save_fig=save_pattern if len(save_pattern) == 0 else save_pattern % 0)
 
     # fill buffer
     while not guesser.simulate_step():
         continue
 
-    nsteps = 50
+    nsteps = 500
     for i in range(nsteps):
         if guesser.simulate_step():
             if i % int(0.45*nsteps) == 0 and False:
@@ -464,8 +480,8 @@ if __name__ == "__main__":
     gscan, dscan, tfp_params = guesser.generate_scan(scans[prediction_input_slice],
                                                      cmdv[prediction_input_slice], ts[prediction_input_slice], clip_max=False)
 
-    print("target_tf", target_tf)
-    print("gen_tf", tfp_params)
+    # print("target_tf", target_tf)
+    # print("gen_tf", tfp_params)
 
     guesser.plot_scans([(scan_to_predict, '#e41a1c', 'scan'),
                         (dscan[-1], '#ff7f0e', 'decoded'),
@@ -477,4 +493,4 @@ if __name__ == "__main__":
                              param_names=['projected', 'predicted'],
                              save_fig=save_pattern if len(save_pattern) == 0 else save_pattern % i)
 
-    plt.show()
+    # plt.show()
