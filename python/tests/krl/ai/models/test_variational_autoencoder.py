@@ -1,9 +1,11 @@
-from guess.models import VariationalAutoEncoder
+
+from krl.ai.models import VariationalAutoEncoder
 from tensorflow import keras
-import tensorflow as tf
-import numpy as np
 import pytest
 import warnings
+
+import tensorflow as tf
+import numpy as np
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
