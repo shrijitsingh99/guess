@@ -10,6 +10,12 @@ import matplotlib.pyplot as plt
 
 from threading import Thread, Lock
 
+
+import tensorflow as tf
+tf.compat.v1.disable_eager_execution()
+session = tf.compat.v1.Session()
+tf.compat.v1.keras.backend.set_session(session)
+
 from utils import LaserScans, MetricsSaver, ElapsedTimer, TfPredictor
 from autoencoder_lib import AutoEncoder
 from gan_lib import GAN
@@ -120,7 +126,9 @@ class ScanGuesser:
             cmd_vel = cmd_vel[:n_rows].reshape((-1, n_factor, cmd_vel.shape[-1]))
             ts = ts[:n_rows].reshape((-1, n_factor, 1))
 
-            self._train(scans, next_scans, cmd_vel, ts, verbose=False)
+            with session.as_default():
+                with session.graph.as_default():
+                    self._train(scans, next_scans, cmd_vel, ts, verbose=False)
 
         if self.start_update_thr:
             print("-- Init update thread... ", end='')
@@ -145,7 +153,9 @@ class ScanGuesser:
                 self.update_mtx.acquire()
                 self.updating_model = True
                 self.update_mtx.release()
-                self._train(scans, next_scans, cmdv, ts, verbose=False)
+                with session.as_default():
+                    with session.graph.as_default():
+                        self._train(scans, next_scans, cmdv, ts, verbose=False)
                 self.update_mtx.acquire()
                 self.updating_model = False
                 self.update_mtx.release()
@@ -310,30 +320,33 @@ class ScanGuesser:
         assert self.correlated_steps <= scans.shape[0], 'Not enough sample to generate scan latent.'
         verbose = self.verbose if verbose is None else verbose
 
-        if verbose:
-            timer = ElapsedTimer()
 
-        encodings = self.encode_scan(scans)
-        decoded_scan = self.decode_scan(encodings, clip_max=clip_max,
-                                        interpolate=self.interpolate_scans_pts)
+        with session.as_default():
+            with session.graph.as_default():
+                if verbose:
+                    timer = ElapsedTimer()
 
-        latent = np.concatenate([encodings, cmd_vel], axis=-1)
-        latent = latent.reshape((-1, self.correlated_steps, self.generator_input_shape[1]))
-        generated_latent = self.gan.generate(latent)
-        generated_scan = self.decode_scan(generated_latent, clip_max=clip_max, interpolate=False)[0]
+                encodings = self.encode_scan(scans)
+                decoded_scan = self.decode_scan(encodings, clip_max=clip_max,
+                                                interpolate=self.interpolate_scans_pts)
 
-        correlated_cmdv = np.expand_dims(cmd_vel, axis=0)
-        correlated_ts = 0.33*np.ones_like(correlated_cmdv[..., :1])
-        correlated_cmd = np.concatenate([correlated_cmdv, correlated_ts], axis=-1)
-        generated_tf_params = self.projector.predict(correlated_cmd)[0]
+                latent = np.concatenate([encodings, cmd_vel], axis=-1)
+                latent = latent.reshape((-1, self.correlated_steps, self.generator_input_shape[1]))
+                generated_latent = self.gan.generate(latent)
+                generated_scan = self.decode_scan(generated_latent, clip_max=clip_max, interpolate=False)[0]
 
-        generated_tf_params[..., :2] *= self.projector_max_dist
-        generated_tf_params[..., 2] *= np.pi
+                correlated_cmdv = np.expand_dims(cmd_vel, axis=0)
+                correlated_ts = 0.33*np.ones_like(correlated_cmdv[..., :1])
+                correlated_cmd = np.concatenate([correlated_cmdv, correlated_ts], axis=-1)
+                generated_tf_params = self.projector.predict(correlated_cmd)[0]
 
-        if verbose:
-            print("-- Prediction in", timer.msecs())
+                generated_tf_params[..., :2] *= self.projector_max_dist
+                generated_tf_params[..., 2] *= np.pi
 
-        return generated_scan, decoded_scan, generated_tf_params
+                if verbose:
+                    print("-- Prediction in", timer.msecs())
+
+            return generated_scan, decoded_scan, generated_tf_params
 
     def generate_raw_scan(self, raw_scans, cmd_vel, ts):
         assert self.correlated_steps <= raw_scans.shape[0], 'Not enough sample to generate scan latent.'
@@ -437,7 +450,7 @@ if __name__ == "__main__":
                           gan_batch_sz=gan_batch_sz, gan_train_steps=20, gan_noise_dim=gan_noise_dim,
                           gan_smoothing_label_factor=gan_smoothing_label_factor,
                           # run
-                          start_update_thr=False, verbose=False,
+                          start_update_thr=False, verbose=True,
                           metrics_save_path_dir=save_path_dir,
                           metrics_save_interleave=1)
     guesser.init(dataset_file, init_models=True, init_batch_num=0, scan_offset=6)
