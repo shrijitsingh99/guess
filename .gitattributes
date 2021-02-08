@@ -1,0 +1,5 @@
+src/ros/guess_simulation/models/diag_floor_b1/meshes/diag_floor_b1.stl filter=lfs diff=lfs merge=lfs -text
+src/ros/guess_simulation/models/diag_floor_b1/meshes/diag_floor_b1.png filter=lfs diff=lfs merge=lfs -text
+src/ros/guess_simulation/maps/diag_floor_b1.png filter=lfs diff=lfs merge=lfs -text
+*.stl filter=lfs diff=lfs merge=lfs -text
+*.png filter=lfs diff=lfs merge=lfs -text
